@@ -7,6 +7,7 @@ export default defineConfig(({ mode }) => {
   const proxy = {
     '/me': { target: apiTarget, changeOrigin: true },
     '/health': { target: apiTarget, changeOrigin: true },
+    '/tasks': { target: apiTarget, changeOrigin: true },
   } as const;
 
   return {

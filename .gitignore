@@ -3,6 +3,13 @@ dist
 .env
 *.tsbuildinfo
 
+# local data (SQLite)
+data
+*.sqlite
+*.sqlite-journal
+*.sqlite-wal
+*.sqlite-shm
+
 # editor / OS
 .DS_Store
 .vscode

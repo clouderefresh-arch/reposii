@@ -28,3 +28,37 @@ export const ErrorResponseSchema = z.object({
 });
 
 export type ErrorResponse = z.infer<typeof ErrorResponseSchema>;
+
+export const TaskSchema = z.object({
+  id: z.number().int().positive(),
+  userId: z.number().int(),
+  title: z.string().min(1).max(200),
+  done: z.boolean(),
+  createdAt: z.number().int(),
+  updatedAt: z.number().int(),
+});
+
+export type Task = z.infer<typeof TaskSchema>;
+
+export const TaskListResponseSchema = z.object({
+  tasks: z.array(TaskSchema),
+});
+
+export type TaskListResponse = z.infer<typeof TaskListResponseSchema>;
+
+export const CreateTaskRequestSchema = z.object({
+  title: z.string().trim().min(1).max(200),
+});
+
+export type CreateTaskRequest = z.infer<typeof CreateTaskRequestSchema>;
+
+export const UpdateTaskRequestSchema = z
+  .object({
+    title: z.string().trim().min(1).max(200).optional(),
+    done: z.boolean().optional(),
+  })
+  .refine((data) => data.title !== undefined || data.done !== undefined, {
+    message: 'At least one field (title or done) must be provided',
+  });
+
+export type UpdateTaskRequest = z.infer<typeof UpdateTaskRequestSchema>;

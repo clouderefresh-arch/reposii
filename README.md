@@ -158,16 +158,33 @@
   - Env: скопируй переменные из `.env.example`. У api добавь домен Vercel в
     `API_ALLOWED_ORIGINS`. У bot — продовый `WEB_APP_URL`.
 
+## Демо-фича: список задач
+
+Шаблон сразу содержит работающий пример полного цикла «UI → API → БД»:
+
+- Главный экран — личный список задач: добавление, чекбокс выполнения, удаление.
+- Хранилище — SQLite (`better-sqlite3`), файл `data/app.sqlite` создаётся автоматически.
+- Каждая задача привязана к Telegram user ID из подписанного `initData`. Изоляция по пользователю — на уровне SQL: каждый WHERE/UPDATE/DELETE содержит `user_id = ?`. Чужие задачи увидеть нельзя.
+- Эндпоинты в `apps/api`:
+  - `GET /tasks` — список задач текущего пользователя;
+  - `POST /tasks` — создать (`{ title }`);
+  - `PATCH /tasks/:id` — изменить (`{ title?, done? }`);
+  - `DELETE /tasks/:id` — удалить.
+- Общие zod-схемы — в `@app/shared` (`TaskSchema`, `CreateTaskRequestSchema`, `UpdateTaskRequestSchema`). Фронт и бэкенд используют одни и те же типы.
+
+Удалять фичу не нужно — это полноценный референс. Если она не нужна в твоём проекте, просто очисти `apps/web/src/pages/HomePage.tsx`, удали роуты `/tasks` в `apps/api/src/server.ts` и удали `apps/api/src/lib/db.ts`.
+
 ## Структура
 
 ```
 .
 ├── apps/
-│   ├── api/      Fastify backend + initData validation
+│   ├── api/      Fastify backend + initData validation + SQLite (tasks CRUD)
 │   ├── bot/      grammY long-polling bot
-│   └── web/      React + Vite Mini App
+│   └── web/      React + Vite Mini App (главный экран — список задач)
 ├── packages/
 │   └── shared/   zod-схемы и типы (@app/shared)
+├── data/         SQLite-файл (создаётся автоматически, в .gitignore)
 ├── package.json
 ├── pnpm-workspace.yaml
 └── tsconfig.base.json

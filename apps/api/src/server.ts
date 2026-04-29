@@ -3,8 +3,14 @@ loadEnv();
 
 import Fastify from 'fastify';
 import cors from '@fastify/cors';
-import type { MeResponse } from '@app/shared';
+import {
+  CreateTaskRequestSchema,
+  UpdateTaskRequestSchema,
+  type MeResponse,
+  type TaskListResponse,
+} from '@app/shared';
 import { InitDataError, validateInitData, type ValidatedInitData } from './lib/validateInitData.js';
+import { createTask, deleteTask, getDb, listTasks, updateTask } from './lib/db.js';
 
 declare module 'fastify' {
   interface FastifyRequest {
@@ -80,6 +86,77 @@ async function buildServer() {
     };
     return response;
   });
+
+  app.get('/tasks', async (request, reply): Promise<TaskListResponse> => {
+    const data = request.initData;
+    if (!data) {
+      reply.code(401).send({ error: 'unauthorized' });
+      return reply as never;
+    }
+    return { tasks: listTasks(data.user.id) };
+  });
+
+  app.post('/tasks', async (request, reply) => {
+    const data = request.initData;
+    if (!data) {
+      reply.code(401).send({ error: 'unauthorized' });
+      return reply;
+    }
+    const parsed = CreateTaskRequestSchema.safeParse(request.body);
+    if (!parsed.success) {
+      reply.code(400).send({ error: 'bad_request', message: parsed.error.message });
+      return reply;
+    }
+    const task = createTask(data.user.id, parsed.data.title);
+    reply.code(201);
+    return { task };
+  });
+
+  app.patch<{ Params: { id: string } }>('/tasks/:id', async (request, reply) => {
+    const data = request.initData;
+    if (!data) {
+      reply.code(401).send({ error: 'unauthorized' });
+      return reply;
+    }
+    const id = Number.parseInt(request.params.id, 10);
+    if (!Number.isInteger(id) || id <= 0) {
+      reply.code(400).send({ error: 'bad_id' });
+      return reply;
+    }
+    const parsed = UpdateTaskRequestSchema.safeParse(request.body);
+    if (!parsed.success) {
+      reply.code(400).send({ error: 'bad_request', message: parsed.error.message });
+      return reply;
+    }
+    const task = updateTask(data.user.id, id, parsed.data);
+    if (!task) {
+      reply.code(404).send({ error: 'not_found' });
+      return reply;
+    }
+    return { task };
+  });
+
+  app.delete<{ Params: { id: string } }>('/tasks/:id', async (request, reply) => {
+    const data = request.initData;
+    if (!data) {
+      reply.code(401).send({ error: 'unauthorized' });
+      return reply;
+    }
+    const id = Number.parseInt(request.params.id, 10);
+    if (!Number.isInteger(id) || id <= 0) {
+      reply.code(400).send({ error: 'bad_id' });
+      return reply;
+    }
+    const ok = deleteTask(data.user.id, id);
+    if (!ok) {
+      reply.code(404).send({ error: 'not_found' });
+      return reply;
+    }
+    reply.code(204);
+    return null;
+  });
+
+  getDb();
 
   return app;
 }
