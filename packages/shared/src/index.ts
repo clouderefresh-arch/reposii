@@ -41,7 +41,10 @@ export const EventSchema = z.object({
   createdAt: z.number().int(),
   updatedAt: z.number().int(),
   registeredCount: z.number().int().min(0),
+  bookedSeats: z.number().int().min(0),
   isRegistered: z.boolean(),
+  myBookingNumber: z.number().int().positive().nullable(),
+  mySeats: z.number().int().min(0),
 });
 
 export type Event = z.infer<typeof EventSchema>;
@@ -71,6 +74,8 @@ export type EventInput = z.infer<typeof EventInputSchema>;
 export const RegistrationSchema = z.object({
   id: z.number().int().positive(),
   eventId: z.number().int().positive(),
+  bookingNumber: z.number().int().positive(),
+  seats: z.number().int().min(1),
   user: TelegramUserSchema,
   createdAt: z.number().int(),
 });
@@ -82,3 +87,9 @@ export const RegistrationListResponseSchema = z.object({
 });
 
 export type RegistrationListResponse = z.infer<typeof RegistrationListResponseSchema>;
+
+export const RegisterRequestSchema = z.object({
+  seats: z.number().int().min(1).max(50).default(1),
+});
+
+export type RegisterRequest = z.infer<typeof RegisterRequestSchema>;

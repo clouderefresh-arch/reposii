@@ -1,10 +1,9 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
 import {
   Section,
   Cell,
   Title,
-  Text,
   Spinner,
   Button,
   Placeholder,
@@ -34,8 +33,21 @@ export function EventPage() {
   const [loading, setLoading] = useState(true);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [seats, setSeats] = useState<number>(1);
 
   const isOrganizer = me?.isOrganizer ?? false;
+
+  const seatsLeft = useMemo(() => {
+    if (!event) return 0;
+    if (event.capacity === 0) return Number.POSITIVE_INFINITY;
+    return Math.max(0, event.capacity - event.bookedSeats);
+  }, [event]);
+
+  const maxSeatsForUser = useMemo(() => {
+    if (!event) return 1;
+    if (event.capacity === 0) return 50;
+    return Math.min(50, Math.max(1, seatsLeft));
+  }, [event, seatsLeft]);
 
   const reload = useCallback(async () => {
     if (!Number.isInteger(id) || id <= 0) {
@@ -64,6 +76,17 @@ export function EventPage() {
   }, [reload]);
 
   useEffect(() => {
+    if (!event) return;
+    setSeats((current) => {
+      const min = 1;
+      const max = maxSeatsForUser;
+      if (current < min) return min;
+      if (current > max) return max;
+      return current;
+    });
+  }, [event, maxSeatsForUser]);
+
+  useEffect(() => {
     const tg = getTelegram();
     if (!tg) return;
     const handleBack = () => navigate('/');
@@ -76,12 +99,51 @@ export function EventPage() {
     };
   }, [navigate]);
 
+  const handleRegister = useCallback(async () => {
+    if (!event || busy) return;
+    const requested = Math.max(1, Math.min(seats, maxSeatsForUser));
+    setBusy(true);
+    setError(null);
+    try {
+      const updated = await registerForEvent(event.id, requested);
+      setEvent(updated);
+      hapticImpact('medium');
+      if (isOrganizer) {
+        const list = await listRegistrations(event.id);
+        setRegistrations(list.registrations);
+      }
+    } catch (err) {
+      setError(formatError(err));
+    } finally {
+      setBusy(false);
+    }
+  }, [event, busy, seats, maxSeatsForUser, isOrganizer]);
+
+  const handleUnregister = useCallback(async () => {
+    if (!event || busy) return;
+    setBusy(true);
+    setError(null);
+    try {
+      const updated = await unregisterFromEvent(event.id);
+      setEvent(updated);
+      hapticImpact('light');
+      if (isOrganizer) {
+        const list = await listRegistrations(event.id);
+        setRegistrations(list.registrations);
+      }
+    } catch (err) {
+      setError(formatError(err));
+    } finally {
+      setBusy(false);
+    }
+  }, [event, busy, isOrganizer]);
+
   useEffect(() => {
     const tg = getTelegram();
     if (!tg || !event) return;
 
     const inPast = event.startsAt < Date.now();
-    const isFull = event.capacity > 0 && event.registeredCount >= event.capacity;
+    const isFull = event.capacity > 0 && event.bookedSeats >= event.capacity;
 
     let handler: (() => void) | null = null;
 
@@ -93,7 +155,7 @@ export function EventPage() {
       handler = () => {
         void handleUnregister();
       };
-      tg.MainButton.setText('Отменить запись');
+      tg.MainButton.setText(`Отменить бронь №${event.myBookingNumber ?? '—'}`);
       tg.MainButton.enable();
       tg.MainButton.show();
       tg.MainButton.onClick(handler);
@@ -105,8 +167,9 @@ export function EventPage() {
       handler = () => {
         void handleRegister();
       };
-      tg.MainButton.setText('Записаться');
-      tg.MainButton.enable();
+      tg.MainButton.setText(seats > 1 ? `Записать ${seats} мест` : 'Записаться');
+      if (busy) tg.MainButton.disable();
+      else tg.MainButton.enable();
       tg.MainButton.show();
       tg.MainButton.onClick(handler);
     }
@@ -114,37 +177,7 @@ export function EventPage() {
     return () => {
       if (handler) tg.MainButton.offClick(handler);
     };
-  }, [event]);
-
-  const handleRegister = useCallback(async () => {
-    if (!event || busy) return;
-    setBusy(true);
-    setError(null);
-    try {
-      const updated = await registerForEvent(event.id);
-      setEvent(updated);
-      hapticImpact('medium');
-    } catch (err) {
-      setError(formatError(err));
-    } finally {
-      setBusy(false);
-    }
-  }, [event, busy]);
-
-  const handleUnregister = useCallback(async () => {
-    if (!event || busy) return;
-    setBusy(true);
-    setError(null);
-    try {
-      const updated = await unregisterFromEvent(event.id);
-      setEvent(updated);
-      hapticImpact('light');
-    } catch (err) {
-      setError(formatError(err));
-    } finally {
-      setBusy(false);
-    }
-  }, [event, busy]);
+  }, [event, seats, busy, handleRegister, handleUnregister]);
 
   const handleDelete = useCallback(async () => {
     if (!event || busy) return;
@@ -183,6 +216,10 @@ export function EventPage() {
     );
   }
 
+  const inPast = event.startsAt < Date.now();
+  const isFull = event.capacity > 0 && event.bookedSeats >= event.capacity;
+  const canBook = !inPast && !event.isRegistered && !isFull;
+
   return (
     <div className="page">
       <Title weight="2">{event.title}</Title>
@@ -191,8 +228,58 @@ export function EventPage() {
         <Cell subtitle={formatEventDate(event.startsAt)}>Дата и время</Cell>
         {event.location ? <Cell subtitle={event.location}>Место</Cell> : null}
         <Cell subtitle={capacityText(event)}>Места</Cell>
-        {event.isRegistered ? <Cell subtitle="вы записаны">Статус</Cell> : null}
+        <Cell subtitle={String(event.registeredCount)}>Броней всего</Cell>
       </Section>
+
+      {event.isRegistered ? (
+        <Section header="Ваша бронь">
+          <Cell subtitle={`№${event.myBookingNumber ?? '—'}`}>Идентификатор</Cell>
+          <Cell subtitle={String(event.mySeats)}>Забронировано мест</Cell>
+        </Section>
+      ) : null}
+
+      {canBook ? (
+        <Section header="Сколько мест бронируете?">
+          <div
+            style={{
+              padding: 12,
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'space-between',
+              gap: 12,
+            }}
+          >
+            <Button
+              size="m"
+              mode="outline"
+              disabled={seats <= 1 || busy}
+              onClick={() => setSeats((s) => Math.max(1, s - 1))}
+            >
+              −
+            </Button>
+            <div style={{ fontSize: 24, fontWeight: 600, minWidth: 40, textAlign: 'center' }}>
+              {seats}
+            </div>
+            <Button
+              size="m"
+              mode="outline"
+              disabled={seats >= maxSeatsForUser || busy}
+              onClick={() => setSeats((s) => Math.min(maxSeatsForUser, s + 1))}
+            >
+              +
+            </Button>
+          </div>
+          <Cell
+            subtitle={
+              event.capacity === 0
+                ? 'Без ограничения по местам'
+                : `Свободно: ${seatsLeft} из ${event.capacity}`
+            }
+          >
+            Доступно
+          </Cell>
+        </Section>
+      ) : null}
 
       {event.description ? (
         <Section header="Описание">
@@ -219,10 +306,28 @@ export function EventPage() {
               registrations.map((r) => (
                 <Cell
                   key={r.id}
+                  before={
+                    <div
+                      style={{
+                        width: 36,
+                        height: 36,
+                        borderRadius: 18,
+                        background: 'var(--tg-secondary-bg-color)',
+                        display: 'flex',
+                        alignItems: 'center',
+                        justifyContent: 'center',
+                        fontWeight: 600,
+                      }}
+                    >
+                      №{r.bookingNumber}
+                    </div>
+                  }
                   subtitle={
-                    [r.user.username ? `@${r.user.username}` : null, `id ${r.user.id}`]
-                      .filter(Boolean)
-                      .join(' · ')
+                    <span>
+                      {r.seats > 1 ? `${r.seats} мест` : '1 место'}
+                      {r.user.username ? ` · @${r.user.username}` : ''}
+                      {` · id ${r.user.id}`}
+                    </span>
                   }
                 >
                   {`${r.user.first_name}${r.user.last_name ? ' ' + r.user.last_name : ''}`}
@@ -253,9 +358,11 @@ export function EventPage() {
 }
 
 function capacityText(event: Event): string {
-  if (event.capacity === 0) return `${event.registeredCount} записались (без ограничения)`;
-  const left = event.capacity - event.registeredCount;
-  return `${event.registeredCount} из ${event.capacity}${left > 0 ? `, осталось ${left}` : ', мест нет'}`;
+  if (event.capacity === 0) {
+    return `${event.bookedSeats} занято (без ограничения)`;
+  }
+  const left = event.capacity - event.bookedSeats;
+  return `${event.bookedSeats} из ${event.capacity}${left > 0 ? `, свободно ${left}` : ', мест нет'}`;
 }
 
 function formatError(err: unknown): string {

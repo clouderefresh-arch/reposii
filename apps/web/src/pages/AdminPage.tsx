@@ -74,8 +74,9 @@ export function AdminPage() {
     const now = Date.now();
     const upcoming = allEvents.filter((e) => e.startsAt >= now - 6 * 60 * 60 * 1000);
     const past = allEvents.filter((e) => e.startsAt < now - 6 * 60 * 60 * 1000);
-    const totalRegistered = allEvents.reduce((sum, e) => sum + e.registeredCount, 0);
-    return { upcoming, past, totalRegistered, totalEvents: allEvents.length };
+    const totalBookings = allEvents.reduce((sum, e) => sum + e.registeredCount, 0);
+    const totalSeats = allEvents.reduce((sum, e) => sum + e.bookedSeats, 0);
+    return { upcoming, past, totalBookings, totalSeats, totalEvents: allEvents.length };
   }, [allEvents]);
 
   const visibleEvents = tab === 'upcoming' ? stats.upcoming : stats.past;
@@ -111,7 +112,8 @@ export function AdminPage() {
         <Cell subtitle={String(stats.totalEvents)}>Всего событий</Cell>
         <Cell subtitle={String(stats.upcoming.length)}>Предстоящих</Cell>
         <Cell subtitle={String(stats.past.length)}>Прошедших</Cell>
-        <Cell subtitle={String(stats.totalRegistered)}>Всего записей</Cell>
+        <Cell subtitle={String(stats.totalBookings)}>Всего броней</Cell>
+        <Cell subtitle={String(stats.totalSeats)}>Всего занятых мест</Cell>
       </Section>
 
       <Tabbar>
@@ -182,6 +184,6 @@ export function AdminPage() {
 }
 
 function capacityLabel(event: Event): string {
-  if (event.capacity === 0) return `${event.registeredCount} записались`;
-  return `${event.registeredCount}/${event.capacity}`;
+  if (event.capacity === 0) return `${event.bookedSeats} мест занято · ${event.registeredCount} броней`;
+  return `${event.bookedSeats}/${event.capacity} · ${event.registeredCount} броней`;
 }

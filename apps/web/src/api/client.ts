@@ -100,8 +100,11 @@ export async function deleteEvent(id: number): Promise<void> {
   await request<unknown>(`/events/${id}`, { method: 'DELETE' });
 }
 
-export async function registerForEvent(id: number): Promise<Event> {
-  const data = await request<unknown>(`/events/${id}/register`, { method: 'POST' });
+export async function registerForEvent(id: number, seats: number): Promise<Event> {
+  const data = await request<unknown>(`/events/${id}/register`, {
+    method: 'POST',
+    body: JSON.stringify({ seats }),
+  });
   return EventEnvelopeSchema.parse(data).event;
 }
 

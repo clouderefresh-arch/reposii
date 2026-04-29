@@ -102,7 +102,7 @@ export function HomePage() {
                   {event.location ? ` · ${event.location}` : ''}
                   {' · '}
                   {capacityLabel(event)}
-                  {event.isRegistered ? ' · вы записаны' : ''}
+                  {event.isRegistered ? ` · ваша бронь №${event.myBookingNumber ?? '—'}` : ''}
                 </span>
               }
             >
@@ -127,6 +127,6 @@ export function HomePage() {
 }
 
 function capacityLabel(event: Event): string {
-  if (event.capacity === 0) return `${event.registeredCount} записались`;
-  return `${event.registeredCount}/${event.capacity}`;
+  if (event.capacity === 0) return `${event.bookedSeats} мест занято`;
+  return `${event.bookedSeats}/${event.capacity}`;
 }

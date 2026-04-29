@@ -1,4 +1,4 @@
-import type { Event, TelegramUser } from '@app/shared';
+import type { Event, Registration, TelegramUser } from '@app/shared';
 
 interface SendOptions {
   chatId: number;
@@ -47,9 +47,9 @@ function eventLine(event: Event): string {
   });
   const capacity =
     event.capacity === 0
-      ? `${event.registeredCount} записались (без ограничения)`
-      : `${event.registeredCount}/${event.capacity}`;
-  return `<b>${escape(event.title)}</b>\n${escape(date)}${event.location ? ' · ' + escape(event.location) : ''}\nМест: ${capacity}`;
+      ? `${event.bookedSeats} мест занято (без ограничения)`
+      : `${event.bookedSeats}/${event.capacity}`;
+  return `<b>${escape(event.title)}</b>\n${escape(date)}${event.location ? ' · ' + escape(event.location) : ''}\nМеста: ${capacity}\nБроней: ${event.registeredCount}`;
 }
 
 export interface NotifyDeps {
@@ -73,8 +73,12 @@ export function createNotifier(deps: NotifyDeps) {
   }
 
   return {
-    async onRegister(event: Event, user: TelegramUser): Promise<void> {
-      const text = `🆕 Новая запись\n\n${eventLine(event)}\n\nЗаписался: ${userLabel(user)}`;
+    async onRegister(event: Event, user: TelegramUser, registration: Registration): Promise<void> {
+      const text =
+        `🆕 Новая запись\n\n${eventLine(event)}\n\n` +
+        `Бронь №${registration.bookingNumber}\n` +
+        `Мест: ${registration.seats}\n` +
+        `Записал(а): ${userLabel(user)}`;
       await notifyAllOrganizers(text);
     },
     async onUnregister(event: Event, user: TelegramUser): Promise<void> {

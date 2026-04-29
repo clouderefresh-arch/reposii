@@ -5,6 +5,7 @@ import Fastify from 'fastify';
 import cors from '@fastify/cors';
 import {
   EventInputSchema,
+  RegisterRequestSchema,
   type EventListResponse,
   type EventResponse,
   type MeResponse,
@@ -232,25 +233,32 @@ async function buildServer() {
       reply.code(400).send({ error: 'bad_id' });
       return reply;
     }
-    const result = registerForEvent(data.user, id);
+    const parsed = RegisterRequestSchema.safeParse(request.body ?? {});
+    if (!parsed.success) {
+      reply.code(400).send({ error: 'bad_request', message: parsed.error.message });
+      return reply;
+    }
+    const result = registerForEvent(data.user, id, parsed.data.seats);
     if (!result.ok) {
-      const status = result.reason === 'not_found' ? 404 : 409;
+      const status = result.reason === 'not_found' ? 404 : result.reason === 'bad_seats' ? 400 : 409;
       reply.code(status).send({
         error: result.reason ?? 'failed',
         message:
           result.reason === 'already'
             ? 'Вы уже записаны на это событие'
             : result.reason === 'full'
-              ? 'Все места заняты'
-              : 'Событие не найдено',
+              ? 'Не хватает свободных мест'
+              : result.reason === 'bad_seats'
+                ? 'Некорректное количество мест'
+                : 'Событие не найдено',
         ...(result.event ? { event: result.event } : {}),
       });
       return reply;
     }
-    if (result.event) {
-      void notifier.onRegister(result.event, data.user);
+    if (result.event && result.registration) {
+      void notifier.onRegister(result.event, data.user, result.registration);
     }
-    return { event: result.event };
+    return { event: result.event, registration: result.registration };
   });
 
   app.delete<{ Params: { id: string } }>('/events/:id/register', async (request, reply) => {
