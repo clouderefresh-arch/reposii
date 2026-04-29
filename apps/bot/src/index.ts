@@ -5,6 +5,12 @@ import { Bot, InlineKeyboard, GrammyError, HttpError } from 'grammy';
 
 const BOT_TOKEN = process.env.BOT_TOKEN;
 const WEB_APP_URL = process.env.WEB_APP_URL;
+const ORGANIZER_IDS = new Set<number>(
+  (process.env.ORGANIZER_TELEGRAM_IDS ?? '')
+    .split(',')
+    .map((s) => Number.parseInt(s.trim(), 10))
+    .filter((n) => Number.isInteger(n) && n > 0),
+);
 
 if (!BOT_TOKEN) {
   console.error('BOT_TOKEN is required');
@@ -19,9 +25,14 @@ const bot = new Bot(BOT_TOKEN);
 
 bot.command('start', async (ctx) => {
   const keyboard = new InlineKeyboard().webApp('Открыть Mini App', WEB_APP_URL);
-  await ctx.reply('Привет! Жми кнопку, чтобы открыть Mini App.', {
-    reply_markup: keyboard,
-  });
+  const userId = ctx.from?.id;
+  const isOrganizer = userId !== undefined && ORGANIZER_IDS.has(userId);
+
+  const text = isOrganizer
+    ? 'Привет, организатор!\n\nЗдесь ты управляешь событиями и видишь записавшихся. Уведомления о новых записях и отменах будут приходить сюда.'
+    : 'Привет! Жми кнопку, чтобы открыть Mini App и записаться на событие.';
+
+  await ctx.reply(text, { reply_markup: keyboard });
 });
 
 bot.command('help', async (ctx) => {

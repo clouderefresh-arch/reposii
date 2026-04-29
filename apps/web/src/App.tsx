@@ -4,6 +4,7 @@ import { HomePage } from './pages/HomePage';
 import { EventPage } from './pages/EventPage';
 import { EventFormPage } from './pages/EventFormPage';
 import { ProfilePage } from './pages/ProfilePage';
+import { AdminPage } from './pages/AdminPage';
 
 function NotFoundPage() {
   return (
@@ -27,6 +28,7 @@ export function App() {
       <Route path="/events/:id" element={<EventPage />} />
       <Route path="/events/:id/edit" element={<EventFormPage mode="edit" />} />
       <Route path="/profile" element={<ProfilePage />} />
+      <Route path="/admin" element={<AdminPage />} />
       <Route path="*" element={<NotFoundPage />} />
     </Routes>
   );

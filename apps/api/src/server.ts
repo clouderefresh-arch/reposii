@@ -22,6 +22,7 @@ import {
   unregisterFromEvent,
   updateEvent,
 } from './lib/db.js';
+import { createNotifier } from './lib/notify.js';
 
 declare module 'fastify' {
   interface FastifyRequest {
@@ -54,6 +55,12 @@ async function buildServer() {
     logger: {
       level: process.env.LOG_LEVEL ?? 'info',
     },
+  });
+
+  const notifier = createNotifier({
+    botToken: BOT_TOKEN,
+    organizerIds: ORGANIZER_IDS,
+    logger: app.log,
   });
 
   await app.register(cors, {
@@ -240,6 +247,9 @@ async function buildServer() {
       });
       return reply;
     }
+    if (result.event) {
+      void notifier.onRegister(result.event, data.user);
+    }
     return { event: result.event };
   });
 
@@ -258,6 +268,9 @@ async function buildServer() {
     if (!result.ok) {
       reply.code(404).send({ error: 'not_registered' });
       return reply;
+    }
+    if (result.event) {
+      void notifier.onUnregister(result.event, data.user);
     }
     return { event: result.event };
   });

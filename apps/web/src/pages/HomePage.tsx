@@ -113,9 +113,12 @@ export function HomePage() {
       </Section>
 
       {!me?.isOrganizer ? null : (
-        <div style={{ paddingTop: 4 }}>
+        <div style={{ paddingTop: 4, display: 'flex', flexDirection: 'column', gap: 8 }}>
           <Button stretched onClick={() => navigate('/events/new')}>
             Создать событие
+          </Button>
+          <Button stretched mode="outline" onClick={() => navigate('/admin')}>
+            Админка
           </Button>
         </div>
       )}
