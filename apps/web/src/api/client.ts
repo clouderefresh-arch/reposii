@@ -1,7 +1,8 @@
 import { MeResponseSchema, type MeResponse } from '@app/shared';
 import { getInitData } from '../lib/telegram';
 
-const API_URL = (import.meta.env.VITE_API_URL ?? 'http://localhost:3001').replace(/\/$/, '');
+const RAW_API_URL = import.meta.env.VITE_API_URL ?? '';
+const API_URL = RAW_API_URL.replace(/\/$/, '');
 
 export class ApiError extends Error {
   public readonly status: number;
