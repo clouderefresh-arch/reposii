@@ -1,4 +1,6 @@
-import 'dotenv/config';
+import { loadEnv } from './lib/loadEnv.js';
+loadEnv();
+
 import Fastify from 'fastify';
 import cors from '@fastify/cors';
 import type { MeResponse } from '@app/shared';
@@ -85,7 +87,8 @@ async function buildServer() {
 async function main() {
   const app = await buildServer();
   try {
-    await app.listen({ port: API_PORT, host: '0.0.0.0' });
+    const host = process.env.API_HOST ?? '127.0.0.1';
+    await app.listen({ port: API_PORT, host });
   } catch (err) {
     app.log.error(err);
     process.exit(1);

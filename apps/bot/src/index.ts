@@ -1,4 +1,6 @@
-import 'dotenv/config';
+import { loadEnv } from './loadEnv.js';
+loadEnv();
+
 import { Bot, InlineKeyboard, GrammyError, HttpError } from 'grammy';
 
 const BOT_TOKEN = process.env.BOT_TOKEN;
