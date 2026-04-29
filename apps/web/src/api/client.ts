@@ -28,7 +28,9 @@ export class ApiError extends Error {
 
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
   const headers = new Headers(init?.headers ?? {});
-  headers.set('Content-Type', 'application/json');
+  if (init?.body !== undefined && init.body !== null && !headers.has('Content-Type')) {
+    headers.set('Content-Type', 'application/json');
+  }
   const initData = getInitData();
   if (initData) {
     headers.set('X-Telegram-Init-Data', initData);
