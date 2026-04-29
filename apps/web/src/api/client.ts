@@ -1,10 +1,13 @@
 import {
+  EventListResponseSchema,
+  EventSchema,
   MeResponseSchema,
-  TaskListResponseSchema,
-  TaskSchema,
+  RegistrationListResponseSchema,
+  type Event,
+  type EventInput,
+  type EventListResponse,
   type MeResponse,
-  type Task,
-  type TaskListResponse,
+  type RegistrationListResponse,
 } from '@app/shared';
 import { z } from 'zod';
 import { getInitData } from '../lib/telegram';
@@ -62,32 +65,50 @@ export async function getHealth(): Promise<{ status: string }> {
   return request<{ status: string }>('/health');
 }
 
-const TaskEnvelopeSchema = z.object({ task: TaskSchema });
+const EventEnvelopeSchema = z.object({ event: EventSchema });
 
-export async function listTasks(): Promise<TaskListResponse> {
-  const data = await request<unknown>('/tasks');
-  return TaskListResponseSchema.parse(data);
+export async function listEvents(includePast = false): Promise<EventListResponse> {
+  const path = includePast ? '/events?all=1' : '/events';
+  const data = await request<unknown>(path);
+  return EventListResponseSchema.parse(data);
 }
 
-export async function createTask(title: string): Promise<Task> {
-  const data = await request<unknown>('/tasks', {
+export async function getEventById(id: number): Promise<Event> {
+  const data = await request<unknown>(`/events/${id}`);
+  return EventEnvelopeSchema.parse(data).event;
+}
+
+export async function createEvent(input: EventInput): Promise<Event> {
+  const data = await request<unknown>('/events', {
     method: 'POST',
-    body: JSON.stringify({ title }),
+    body: JSON.stringify(input),
   });
-  return TaskEnvelopeSchema.parse(data).task;
+  return EventEnvelopeSchema.parse(data).event;
 }
 
-export async function updateTask(
-  id: number,
-  patch: { title?: string; done?: boolean },
-): Promise<Task> {
-  const data = await request<unknown>(`/tasks/${id}`, {
+export async function updateEvent(id: number, input: EventInput): Promise<Event> {
+  const data = await request<unknown>(`/events/${id}`, {
     method: 'PATCH',
-    body: JSON.stringify(patch),
+    body: JSON.stringify(input),
   });
-  return TaskEnvelopeSchema.parse(data).task;
+  return EventEnvelopeSchema.parse(data).event;
 }
 
-export async function deleteTask(id: number): Promise<void> {
-  await request<unknown>(`/tasks/${id}`, { method: 'DELETE' });
+export async function deleteEvent(id: number): Promise<void> {
+  await request<unknown>(`/events/${id}`, { method: 'DELETE' });
+}
+
+export async function registerForEvent(id: number): Promise<Event> {
+  const data = await request<unknown>(`/events/${id}/register`, { method: 'POST' });
+  return EventEnvelopeSchema.parse(data).event;
+}
+
+export async function unregisterFromEvent(id: number): Promise<Event> {
+  const data = await request<unknown>(`/events/${id}/register`, { method: 'DELETE' });
+  return EventEnvelopeSchema.parse(data).event;
+}
+
+export async function listRegistrations(eventId: number): Promise<RegistrationListResponse> {
+  const data = await request<unknown>(`/events/${eventId}/registrations`);
+  return RegistrationListResponseSchema.parse(data);
 }

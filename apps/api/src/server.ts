@@ -4,13 +4,24 @@ loadEnv();
 import Fastify from 'fastify';
 import cors from '@fastify/cors';
 import {
-  CreateTaskRequestSchema,
-  UpdateTaskRequestSchema,
+  EventInputSchema,
+  type EventListResponse,
+  type EventResponse,
   type MeResponse,
-  type TaskListResponse,
+  type RegistrationListResponse,
 } from '@app/shared';
 import { InitDataError, validateInitData, type ValidatedInitData } from './lib/validateInitData.js';
-import { createTask, deleteTask, getDb, listTasks, updateTask } from './lib/db.js';
+import {
+  createEvent,
+  deleteEvent,
+  getDb,
+  getEvent,
+  listEvents,
+  listRegistrations,
+  registerForEvent,
+  unregisterFromEvent,
+  updateEvent,
+} from './lib/db.js';
 
 declare module 'fastify' {
   interface FastifyRequest {
@@ -25,7 +36,18 @@ const ALLOWED_ORIGINS = (process.env.API_ALLOWED_ORIGINS ?? '')
   .map((s) => s.trim())
   .filter((s) => s.length > 0);
 
+const ORGANIZER_IDS = new Set<number>(
+  (process.env.ORGANIZER_TELEGRAM_IDS ?? '')
+    .split(',')
+    .map((s) => Number.parseInt(s.trim(), 10))
+    .filter((n) => Number.isInteger(n) && n > 0),
+);
+
 const PUBLIC_ROUTES = new Set<string>(['/health']);
+
+function isOrganizer(userId: number): boolean {
+  return ORGANIZER_IDS.has(userId);
+}
 
 async function buildServer() {
   const app = Fastify({
@@ -83,39 +105,71 @@ async function buildServer() {
     const response: MeResponse = {
       user: data.user,
       authDate: data.authDate,
+      isOrganizer: isOrganizer(data.user.id),
     };
     return response;
   });
 
-  app.get('/tasks', async (request, reply): Promise<TaskListResponse> => {
+  app.get('/events', async (request, reply): Promise<EventListResponse> => {
     const data = request.initData;
     if (!data) {
       reply.code(401).send({ error: 'unauthorized' });
       return reply as never;
     }
-    return { tasks: listTasks(data.user.id) };
+    const all = (request.query as { all?: string })?.all === '1' && isOrganizer(data.user.id);
+    return { events: listEvents(data.user.id, { upcomingOnly: !all }) };
   });
 
-  app.post('/tasks', async (request, reply) => {
+  app.get<{ Params: { id: string } }>(
+    '/events/:id',
+    async (request, reply): Promise<EventResponse> => {
+      const data = request.initData;
+      if (!data) {
+        reply.code(401).send({ error: 'unauthorized' });
+        return reply as never;
+      }
+      const id = Number.parseInt(request.params.id, 10);
+      if (!Number.isInteger(id) || id <= 0) {
+        reply.code(400).send({ error: 'bad_id' });
+        return reply as never;
+      }
+      const event = getEvent(data.user.id, id);
+      if (!event) {
+        reply.code(404).send({ error: 'not_found' });
+        return reply as never;
+      }
+      return { event };
+    },
+  );
+
+  app.post('/events', async (request, reply) => {
     const data = request.initData;
     if (!data) {
       reply.code(401).send({ error: 'unauthorized' });
       return reply;
     }
-    const parsed = CreateTaskRequestSchema.safeParse(request.body);
+    if (!isOrganizer(data.user.id)) {
+      reply.code(403).send({ error: 'forbidden', message: 'Только организатор может создавать события' });
+      return reply;
+    }
+    const parsed = EventInputSchema.safeParse(request.body);
     if (!parsed.success) {
       reply.code(400).send({ error: 'bad_request', message: parsed.error.message });
       return reply;
     }
-    const task = createTask(data.user.id, parsed.data.title);
+    const event = createEvent(data.user.id, parsed.data);
     reply.code(201);
-    return { task };
+    return { event };
   });
 
-  app.patch<{ Params: { id: string } }>('/tasks/:id', async (request, reply) => {
+  app.patch<{ Params: { id: string } }>('/events/:id', async (request, reply) => {
     const data = request.initData;
     if (!data) {
       reply.code(401).send({ error: 'unauthorized' });
+      return reply;
+    }
+    if (!isOrganizer(data.user.id)) {
+      reply.code(403).send({ error: 'forbidden' });
       return reply;
     }
     const id = Number.parseInt(request.params.id, 10);
@@ -123,23 +177,27 @@ async function buildServer() {
       reply.code(400).send({ error: 'bad_id' });
       return reply;
     }
-    const parsed = UpdateTaskRequestSchema.safeParse(request.body);
+    const parsed = EventInputSchema.safeParse(request.body);
     if (!parsed.success) {
       reply.code(400).send({ error: 'bad_request', message: parsed.error.message });
       return reply;
     }
-    const task = updateTask(data.user.id, id, parsed.data);
-    if (!task) {
+    const event = updateEvent(data.user.id, id, parsed.data);
+    if (!event) {
       reply.code(404).send({ error: 'not_found' });
       return reply;
     }
-    return { task };
+    return { event };
   });
 
-  app.delete<{ Params: { id: string } }>('/tasks/:id', async (request, reply) => {
+  app.delete<{ Params: { id: string } }>('/events/:id', async (request, reply) => {
     const data = request.initData;
     if (!data) {
       reply.code(401).send({ error: 'unauthorized' });
+      return reply;
+    }
+    if (!isOrganizer(data.user.id)) {
+      reply.code(403).send({ error: 'forbidden' });
       return reply;
     }
     const id = Number.parseInt(request.params.id, 10);
@@ -147,7 +205,7 @@ async function buildServer() {
       reply.code(400).send({ error: 'bad_id' });
       return reply;
     }
-    const ok = deleteTask(data.user.id, id);
+    const ok = deleteEvent(id);
     if (!ok) {
       reply.code(404).send({ error: 'not_found' });
       return reply;
@@ -155,6 +213,75 @@ async function buildServer() {
     reply.code(204);
     return null;
   });
+
+  app.post<{ Params: { id: string } }>('/events/:id/register', async (request, reply) => {
+    const data = request.initData;
+    if (!data) {
+      reply.code(401).send({ error: 'unauthorized' });
+      return reply;
+    }
+    const id = Number.parseInt(request.params.id, 10);
+    if (!Number.isInteger(id) || id <= 0) {
+      reply.code(400).send({ error: 'bad_id' });
+      return reply;
+    }
+    const result = registerForEvent(data.user, id);
+    if (!result.ok) {
+      const status = result.reason === 'not_found' ? 404 : 409;
+      reply.code(status).send({
+        error: result.reason ?? 'failed',
+        message:
+          result.reason === 'already'
+            ? 'Вы уже записаны на это событие'
+            : result.reason === 'full'
+              ? 'Все места заняты'
+              : 'Событие не найдено',
+        ...(result.event ? { event: result.event } : {}),
+      });
+      return reply;
+    }
+    return { event: result.event };
+  });
+
+  app.delete<{ Params: { id: string } }>('/events/:id/register', async (request, reply) => {
+    const data = request.initData;
+    if (!data) {
+      reply.code(401).send({ error: 'unauthorized' });
+      return reply;
+    }
+    const id = Number.parseInt(request.params.id, 10);
+    if (!Number.isInteger(id) || id <= 0) {
+      reply.code(400).send({ error: 'bad_id' });
+      return reply;
+    }
+    const result = unregisterFromEvent(data.user.id, id);
+    if (!result.ok) {
+      reply.code(404).send({ error: 'not_registered' });
+      return reply;
+    }
+    return { event: result.event };
+  });
+
+  app.get<{ Params: { id: string } }>(
+    '/events/:id/registrations',
+    async (request, reply): Promise<RegistrationListResponse> => {
+      const data = request.initData;
+      if (!data) {
+        reply.code(401).send({ error: 'unauthorized' });
+        return reply as never;
+      }
+      if (!isOrganizer(data.user.id)) {
+        reply.code(403).send({ error: 'forbidden' });
+        return reply as never;
+      }
+      const id = Number.parseInt(request.params.id, 10);
+      if (!Number.isInteger(id) || id <= 0) {
+        reply.code(400).send({ error: 'bad_id' });
+        return reply as never;
+      }
+      return { registrations: listRegistrations(id) };
+    },
+  );
 
   getDb();
 

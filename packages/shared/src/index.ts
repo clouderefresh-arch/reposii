@@ -18,6 +18,7 @@ export type TelegramUser = z.infer<typeof TelegramUserSchema>;
 export const MeResponseSchema = z.object({
   user: TelegramUserSchema,
   authDate: z.number().int(),
+  isOrganizer: z.boolean(),
 });
 
 export type MeResponse = z.infer<typeof MeResponseSchema>;
@@ -29,36 +30,55 @@ export const ErrorResponseSchema = z.object({
 
 export type ErrorResponse = z.infer<typeof ErrorResponseSchema>;
 
-export const TaskSchema = z.object({
+export const EventSchema = z.object({
   id: z.number().int().positive(),
-  userId: z.number().int(),
   title: z.string().min(1).max(200),
-  done: z.boolean(),
+  description: z.string().max(2000),
+  location: z.string().max(200),
+  startsAt: z.number().int(),
+  capacity: z.number().int().min(0),
+  organizerId: z.number().int(),
   createdAt: z.number().int(),
   updatedAt: z.number().int(),
+  registeredCount: z.number().int().min(0),
+  isRegistered: z.boolean(),
 });
 
-export type Task = z.infer<typeof TaskSchema>;
+export type Event = z.infer<typeof EventSchema>;
 
-export const TaskListResponseSchema = z.object({
-  tasks: z.array(TaskSchema),
+export const EventListResponseSchema = z.object({
+  events: z.array(EventSchema),
 });
 
-export type TaskListResponse = z.infer<typeof TaskListResponseSchema>;
+export type EventListResponse = z.infer<typeof EventListResponseSchema>;
 
-export const CreateTaskRequestSchema = z.object({
+export const EventResponseSchema = z.object({
+  event: EventSchema,
+});
+
+export type EventResponse = z.infer<typeof EventResponseSchema>;
+
+export const EventInputSchema = z.object({
   title: z.string().trim().min(1).max(200),
+  description: z.string().trim().max(2000).default(''),
+  location: z.string().trim().max(200).default(''),
+  startsAt: z.number().int(),
+  capacity: z.number().int().min(0).max(100000),
 });
 
-export type CreateTaskRequest = z.infer<typeof CreateTaskRequestSchema>;
+export type EventInput = z.infer<typeof EventInputSchema>;
 
-export const UpdateTaskRequestSchema = z
-  .object({
-    title: z.string().trim().min(1).max(200).optional(),
-    done: z.boolean().optional(),
-  })
-  .refine((data) => data.title !== undefined || data.done !== undefined, {
-    message: 'At least one field (title or done) must be provided',
-  });
+export const RegistrationSchema = z.object({
+  id: z.number().int().positive(),
+  eventId: z.number().int().positive(),
+  user: TelegramUserSchema,
+  createdAt: z.number().int(),
+});
 
-export type UpdateTaskRequest = z.infer<typeof UpdateTaskRequestSchema>;
+export type Registration = z.infer<typeof RegistrationSchema>;
+
+export const RegistrationListResponseSchema = z.object({
+  registrations: z.array(RegistrationSchema),
+});
+
+export type RegistrationListResponse = z.infer<typeof RegistrationListResponseSchema>;

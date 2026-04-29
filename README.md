@@ -158,30 +158,58 @@
   - Env: скопируй переменные из `.env.example`. У api добавь домен Vercel в
     `API_ALLOWED_ORIGINS`. У bot — продовый `WEB_APP_URL`.
 
-## Демо-фича: список задач
+## Что умеет приложение: запись на события
 
-Шаблон сразу содержит работающий пример полного цикла «UI → API → БД»:
+Стартовый функционал — система записи на мероприятия с двумя ролями.
 
-- Главный экран — личный список задач: добавление, чекбокс выполнения, удаление.
-- Хранилище — SQLite (`better-sqlite3`), файл `data/app.sqlite` создаётся автоматически.
-- Каждая задача привязана к Telegram user ID из подписанного `initData`. Изоляция по пользователю — на уровне SQL: каждый WHERE/UPDATE/DELETE содержит `user_id = ?`. Чужие задачи увидеть нельзя.
-- Эндпоинты в `apps/api`:
-  - `GET /tasks` — список задач текущего пользователя;
-  - `POST /tasks` — создать (`{ title }`);
-  - `PATCH /tasks/:id` — изменить (`{ title?, done? }`);
-  - `DELETE /tasks/:id` — удалить.
-- Общие zod-схемы — в `@app/shared` (`TaskSchema`, `CreateTaskRequestSchema`, `UpdateTaskRequestSchema`). Фронт и бэкенд используют одни и те же типы.
+### Роли
 
-Удалять фичу не нужно — это полноценный референс. Если она не нужна в твоём проекте, просто очисти `apps/web/src/pages/HomePage.tsx`, удали роуты `/tasks` в `apps/api/src/server.ts` и удали `apps/api/src/lib/db.ts`.
+- **Организатор**. Telegram user ID, перечисленные через запятую в `ORGANIZER_TELEGRAM_IDS` в `.env`. Может:
+  - создавать события (название, описание, место, дата/время, вместимость);
+  - редактировать и удалять свои события;
+  - видеть список всех записавшихся на событие (имя, username, Telegram ID).
+- **Участник**. Любой пользователь, открывший Mini App. Может:
+  - смотреть список ближайших событий;
+  - открывать карточку события и записываться;
+  - отменять свою запись.
+
+### Эндпоинты `apps/api`
+
+- `GET /me` — данные пользователя + флаг `isOrganizer`.
+- `GET /events` — список ближайших событий (с пометкой `isRegistered` и счётчиком записей). Параметр `?all=1` (только для организатора) возвращает в том числе прошедшие.
+- `GET /events/:id` — карточка события.
+- `POST /events`, `PATCH /events/:id`, `DELETE /events/:id` — только организатор.
+- `POST /events/:id/register` — записаться. Защищено `UNIQUE(event_id, user_id)` и проверкой вместимости в транзакции.
+- `DELETE /events/:id/register` — отменить запись.
+- `GET /events/:id/registrations` — список записавшихся (только организатор).
+
+### Хранилище
+
+SQLite (`better-sqlite3`), файл `data/app.sqlite` создаётся автоматически. Схема:
+
+- `events(id, title, description, location, starts_at, capacity, organizer_id, created_at, updated_at)`;
+- `registrations(id, event_id, user_id, first_name, last_name, username, language_code, photo_url, created_at)` с `UNIQUE(event_id, user_id)` и `ON DELETE CASCADE` от `events.id`.
+
+В шапке `apps/api/src/lib/db.ts` есть `db.exec(...)` с `CREATE TABLE IF NOT EXISTS` — расширять схему можно прямо там.
+
+### Как стать организатором
+
+1. Узнай свой Telegram user ID (он появится в Mini App в разделе «Профиль» → «ID», либо у бота `@userinfobot`).
+2. В корневом `.env` добавь:
+   ```
+   ORGANIZER_TELEGRAM_IDS=твой_id,второй_id
+   ```
+3. Перезапусти `pnpm dev`.
+4. На главной появится кнопка «Создать событие», а на карточке события — список записавшихся.
 
 ## Структура
 
 ```
 .
 ├── apps/
-│   ├── api/      Fastify backend + initData validation + SQLite (tasks CRUD)
+│   ├── api/      Fastify + initData validation + SQLite (events, registrations)
 │   ├── bot/      grammY long-polling bot
-│   └── web/      React + Vite Mini App (главный экран — список задач)
+│   └── web/      React + Vite Mini App (события + запись)
 ├── packages/
 │   └── shared/   zod-схемы и типы (@app/shared)
 ├── data/         SQLite-файл (создаётся автоматически, в .gitignore)
