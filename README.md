@@ -192,6 +192,42 @@ SQLite (`better-sqlite3`), файл `data/app.sqlite` создаётся авт�
 
 В шапке `apps/api/src/lib/db.ts` есть `db.exec(...)` с `CREATE TABLE IF NOT EXISTS` — расширять схему можно прямо там.
 
+### Выгрузка записей в Google Sheets (опционально)
+
+При каждой записи и отмене бэкенд может добавлять строку в Google Таблицу — удобно для оффлайн-просмотра, отчётов и шеринга команде. Делается через Service Account, токены не нужны.
+
+**Настройка:**
+
+1. **Service Account.** Зайди в Google Cloud Console (`https://console.cloud.google.com/`), создай или выбери проект.
+   - `APIs & Services` → `Library` → найди `Google Sheets API` → `Enable`.
+   - `APIs & Services` → `Credentials` → `Create credentials` → `Service account`.
+   - Имя любое (например, `mini-app-sheets`), роли можно не назначать.
+   - У созданного аккаунта в разделе `Keys` нажми `Add key` → `Create new key` → `JSON`. Скачается файл вида `project-name-12345.json`.
+2. **Положи ключ в проект.** Например, в корень репо как `service-account.json` (он в `.gitignore`, не закоммитится). Запомни путь.
+3. **Создай таблицу.** В Google Sheets → новая пустая таблица. Имя любое.
+   - Скопируй её **ID** из URL: `https://docs.google.com/spreadsheets/d/THIS_IS_ID/edit#gid=0`.
+   - В верхнем правом углу `Share` → вставь email сервис-аккаунта (он есть в JSON в поле `client_email`, например `mini-app-sheets@project.iam.gserviceaccount.com`) → дай роль `Editor`.
+4. **Заполни `.env`** в корне репо:
+   ```
+   GOOGLE_SHEET_ID=ID_таблицы_из_URL
+   GOOGLE_SHEET_NAME=Registrations
+   GOOGLE_SERVICE_ACCOUNT_FILE=./service-account.json
+   ```
+5. Перезапусти `pnpm dev`. В логе api появится `Google Sheets export enabled`.
+
+При первой записи бэкенд автоматически создаст лист `Registrations` (если его нет), пропишет шапку и начнёт добавлять строки. Структура:
+
+| Время | ID события | Событие | Когда | Место | Действие | Бронь № | Мест | Имя | Фамилия | Username | Telegram ID |
+
+`Действие` — это `Запись` или `Отмена`. История append-only, ничего не перезаписывается, удобно для аудита.
+
+**В прод (Railway/Render).** Файл туда залить нельзя, поэтому используй переменную `GOOGLE_SERVICE_ACCOUNT_JSON` — положи в неё содержимое `service-account.json` одной строкой (заменив переводы `\n` в `private_key`):
+```
+GOOGLE_SERVICE_ACCOUNT_JSON={"type":"service_account","project_id":"...","private_key":"-----BEGIN PRIVATE KEY-----\\n...","client_email":"..."}
+```
+
+Если переменные не заполнены — выгрузка просто отключается, основной функционал работает без изменений.
+
 ### Как стать организатором
 
 1. Узнай свой Telegram user ID (он появится в Mini App в разделе «Профиль» → «ID», либо у бота `@userinfobot`).

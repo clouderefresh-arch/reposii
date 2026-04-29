@@ -24,6 +24,7 @@ import {
   updateEvent,
 } from './lib/db.js';
 import { createNotifier } from './lib/notify.js';
+import { createSheetsExporter } from './lib/sheets.js';
 
 declare module 'fastify' {
   interface FastifyRequest {
@@ -63,6 +64,11 @@ async function buildServer() {
     organizerIds: ORGANIZER_IDS,
     logger: app.log,
   });
+
+  const sheets = createSheetsExporter({ logger: app.log });
+  if (sheets.enabled) {
+    app.log.info({}, 'Google Sheets export enabled');
+  }
 
   await app.register(cors, {
     origin: ALLOWED_ORIGINS.length > 0 ? ALLOWED_ORIGINS : false,
@@ -257,6 +263,7 @@ async function buildServer() {
     }
     if (result.event && result.registration) {
       void notifier.onRegister(result.event, data.user, result.registration);
+      void sheets.recordRegister(result.event, data.user, result.registration);
     }
     return { event: result.event, registration: result.registration };
   });
@@ -279,6 +286,7 @@ async function buildServer() {
     }
     if (result.event) {
       void notifier.onUnregister(result.event, data.user);
+      void sheets.recordUnregister(result.event, data.user);
     }
     return { event: result.event };
   });
