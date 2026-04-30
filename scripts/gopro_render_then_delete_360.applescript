@@ -496,7 +496,10 @@ on renderOne(srcPosix, outFolderPosix, baseName)
 	end if
 
 	my expandAdvancedSection()
+	my dumpExportSheet("/tmp/gopro_export_sheet_before.txt")
 	my applyAllSettings()
+	delay 0.5
+	my dumpExportSheet("/tmp/gopro_export_sheet_after.txt")
 
 	-- Кликаем "Далее..." (AXId=exportNext) через каскад стратегий.
 	-- Кнопка часто AXUnknown, обычный click её не активирует.
@@ -910,6 +913,95 @@ on findDefaultButtonInSheet()
 	end tell
 	return missing value
 end findDefaultButtonInSheet
+
+on dumpExportSheet(outPath)
+	-- Снимок radio buttons / checkboxes / sliders / static texts в export-sheet.
+	-- Помогает понять, почему applyAllSettings не «фиксирует» параметры:
+	-- то ли элементы не находятся, то ли клик не регистрируется.
+	try
+		do shell script "echo '=== EXPORT SHEET DUMP ===' > " & quoted form of outPath
+		do shell script "printf 'time: %s\\n' " & quoted form of ((current date) as text) & " >> " & quoted form of outPath
+	end try
+	tell application "System Events"
+		tell process kAppName
+			try
+				set sh to my exportContainer()
+				if sh is missing value then
+					do shell script "echo '(export container не найден)' >> " & quoted form of outPath
+					return
+				end if
+				try
+					set rgs to every radio group of sh
+					my appendDump(outPath, "radio groups: " & (count of rgs))
+					repeat with rgRef in rgs
+						set rgEl to (contents of rgRef)
+						set rbs to every radio button of rgEl
+						repeat with rbRef in rbs
+							set rbEl to (contents of rbRef)
+							my appendDump(outPath, "  radio name='" & my safeNameOf(rbEl) & "' value=" & my safeValueOf(rbEl))
+						end repeat
+					end repeat
+				end try
+				try
+					set rbs2 to every radio button of sh
+					my appendDump(outPath, "free radio buttons: " & (count of rbs2))
+					repeat with rbRef in rbs2
+						set rbEl to (contents of rbRef)
+						my appendDump(outPath, "  radio name='" & my safeNameOf(rbEl) & "' value=" & my safeValueOf(rbEl))
+					end repeat
+				end try
+				try
+					set cbs to every checkbox of sh
+					my appendDump(outPath, "checkboxes: " & (count of cbs))
+					repeat with cbRef in cbs
+						set cbEl to (contents of cbRef)
+						my appendDump(outPath, "  cb name='" & my safeNameOf(cbEl) & "' value=" & my safeValueOf(cbEl))
+					end repeat
+				end try
+				try
+					set slds to every slider of sh
+					my appendDump(outPath, "sliders: " & (count of slds))
+					repeat with sRef in slds
+						set sEl to (contents of sRef)
+						my appendDump(outPath, "  sl name='" & my safeNameOf(sEl) & "' desc='" & my safeDescOf(sEl) & "' value=" & my safeValueOf(sEl))
+					end repeat
+				end try
+				try
+					set sts to every static text of sh
+					my appendDump(outPath, "static texts: " & (count of sts))
+					repeat with stRef in sts
+						set stEl to (contents of stRef)
+						my appendDump(outPath, "  st value='" & my safeValueOf(stEl) & "'")
+					end repeat
+				end try
+			on error eMsg
+				my appendDump(outPath, "ERR dumpExportSheet: " & eMsg)
+			end try
+		end tell
+	end tell
+end dumpExportSheet
+
+on safeValueOf(el)
+	tell application "System Events"
+		try
+			set v to value of el
+			if v is missing value then return ""
+			return (v as text)
+		end try
+	end tell
+	return ""
+end safeValueOf
+
+on safeDescOf(el)
+	tell application "System Events"
+		try
+			set v to description of el
+			if v is missing value then return ""
+			return (v as text)
+		end try
+	end tell
+	return ""
+end safeDescOf
 
 on logCurrentSheetButtons()
 	-- Логирует список всех кнопок, видимых сейчас в окне 1 / sheet 1 /
