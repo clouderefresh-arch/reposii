@@ -1934,84 +1934,189 @@ on codecLabels(v)
 end codecLabels
 
 on selectRadio(container, labels)
+	-- Ищет radio button с именем из labels и переключает на него.
+	-- В этой версии GoPro Player AppleScript click по radio молча игнорируется,
+	-- поэтому используем каскад: AXPress → cliclick → click at, и проверяем
+	-- результат по value. Возвращает true, если переключилось.
+	set candidates to my collectRadios(container)
+	repeat with rbRef in candidates
+		set rb to (contents of rbRef)
+		try
+			set rbName to my safeNameOf(rb)
+			if rbName is not "" then
+				repeat with lbl in labels
+					if rbName contains (lbl as text) then
+						-- Уже выбран?
+						set curVal to 0
+						try
+							set curVal to (value of rb as integer)
+						end try
+						if curVal is 1 then
+							my logLine("selectRadio: '" & rbName & "' уже выбран")
+							return true
+						end if
+						-- Кликаем каскадом.
+						if my pressUiElement(rb, "radio '" & rbName & "'") then
+							my logLine("selectRadio: '" & rbName & "' переключен")
+							return true
+						else
+							my logLine("selectRadio: '" & rbName & "' не удалось переключить")
+							return false
+						end if
+					end if
+				end repeat
+			end if
+		end try
+	end repeat
+	my logLine("selectRadio: ни одного из labels не найдено: " & (my joinList(labels, ", ")))
+	return false
+end selectRadio
+
+on collectRadios(container)
+	set out to {}
 	tell application "System Events"
-		set candidates to {}
 		try
 			set rgs to every radio group of container
-			repeat with rg in rgs
+			repeat with rgRef in rgs
 				try
-					set rbs to every radio button of rg
-					repeat with rb in rbs
-						set end of candidates to rb
+					set rbs to every radio button of (contents of rgRef)
+					repeat with rbRef in rbs
+						set end of out to rbRef
 					end repeat
 				end try
 			end repeat
 		end try
 		try
 			set extra to every radio button of container
-			repeat with rb in extra
-				set end of candidates to rb
+			repeat with rbRef in extra
+				set end of out to rbRef
 			end repeat
 		end try
-		repeat with rb in candidates
-			try
-				set rbName to name of rb
-				if rbName is not missing value then
-					repeat with lbl in labels
-						if (rbName as text) contains (lbl as text) then
-							if (value of rb as integer) is 0 then
-								click rb
-								delay 0.2
-							end if
-							return
-						end if
-					end repeat
-				end if
-			end try
-		end repeat
 	end tell
-end selectRadio
+	return out
+end collectRadios
 
 on setCheckboxByName(container, labels, desiredOn)
 	tell application "System Events"
+		set boxes to {}
 		try
 			set boxes to every checkbox of container
-		on error
-			return
 		end try
-		repeat with cb in boxes
-			try
-				set match to false
-				try
-					set t to name of cb
-					if t is not missing value then
-						repeat with lbl in labels
-							if (t as text) contains (lbl as text) then set match to true
-						end repeat
-					end if
-				end try
-				if not match then
-					try
-						set d to description of cb
-						if d is not missing value then
-							repeat with lbl in labels
-								if (d as text) contains (lbl as text) then set match to true
-							end repeat
-						end if
-					end try
-				end if
-				if match then
-					set currentVal to (value of cb as integer)
-					if (desiredOn and currentVal is 0) or ((not desiredOn) and currentVal is 1) then
-						click cb
-						delay 0.2
-					end if
-					return
-				end if
-			end try
-		end repeat
 	end tell
+	repeat with cbRef in boxes
+		set cb to (contents of cbRef)
+		set match to false
+		set cbName to my safeNameOf(cb)
+		if cbName is not "" then
+			repeat with lbl in labels
+				if cbName contains (lbl as text) then set match to true
+			end repeat
+		end if
+		if not match then
+			set cbDesc to my safeDescOf(cb)
+			if cbDesc is not "" then
+				repeat with lbl in labels
+					if cbDesc contains (lbl as text) then set match to true
+				end repeat
+			end if
+		end if
+		if match then
+			set curVal to 0
+			try
+				set curVal to (value of cb as integer)
+			end try
+			set wantOn to (desiredOn is true)
+			set isOn to (curVal is 1)
+			if wantOn is isOn then
+				my logLine("checkbox '" & cbName & "': уже " & (curVal as text))
+				return true
+			end if
+			if my pressUiElement(cb, "checkbox '" & cbName & "'") then
+				my logLine("checkbox '" & cbName & "' → " & (desiredOn as text))
+				return true
+			else
+				my logLine("checkbox '" & cbName & "' не переключился")
+				return false
+			end if
+		end if
+	end repeat
+	my logLine("checkbox: ни одного из labels не найдено: " & (my joinList(labels, ", ")))
+	return false
 end setCheckboxByName
+
+on pressUiElement(uiEl, label)
+	-- Кликает каскадом: AXPress → cliclick → click at → click. Возвращает
+	-- true, если value элемента изменилось ИЛИ если у элемента нет value
+	-- но action прошёл без ошибки.
+	if uiEl is missing value then return false
+	set startVal to "<no-value>"
+	tell application "System Events"
+		try
+			set startVal to (value of uiEl as text)
+		end try
+	end tell
+
+	-- A. AXPress.
+	try
+		tell application "System Events" to perform action "AXPress" of uiEl
+		delay 0.25
+		if my elementValueChanged(uiEl, startVal) then return true
+	end try
+
+	-- B. cliclick.
+	set coords to my centerOf(uiEl)
+	if coords is not missing value then
+		set cx to item 1 of coords
+		set cy to item 2 of coords
+		set cliclickPath to my findCliclick()
+		if cliclickPath is not "" then
+			try
+				tell application kAppName to activate
+				delay 0.15
+				do shell script (quoted form of cliclickPath) & " c:" & cx & "," & cy
+				delay 0.25
+				if my elementValueChanged(uiEl, startVal) then return true
+			end try
+		end if
+		-- C. click at.
+		try
+			tell application kAppName to activate
+			delay 0.15
+			tell application "System Events" to click at {cx, cy}
+			delay 0.25
+			if my elementValueChanged(uiEl, startVal) then return true
+		end try
+	end if
+
+	-- D. plain click.
+	try
+		tell application "System Events" to click uiEl
+		delay 0.25
+		if my elementValueChanged(uiEl, startVal) then return true
+	end try
+
+	my logLine("pressUiElement[" & label & "]: ни одна стратегия не сработала")
+	return false
+end pressUiElement
+
+on elementValueChanged(uiEl, beforeVal)
+	tell application "System Events"
+		try
+			set nowVal to (value of uiEl as text)
+			if nowVal is not beforeVal then return true
+		end try
+	end tell
+	return false
+end elementValueChanged
+
+on joinList(lst, sep)
+	set out to ""
+	repeat with i from 1 to (count of lst)
+		if i > 1 then set out to out & sep
+		set out to out & ((item i of lst) as text)
+	end repeat
+	return out
+end joinList
 
 on setSliderByLabel(container, labels, normalizedValue)
 	if normalizedValue < 0 then set normalizedValue to 0
