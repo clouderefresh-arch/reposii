@@ -78,12 +78,15 @@ property kDenoiseLevel : 0.5
 -- ТАЙМИНГИ
 ------------------------------------------------------------------------------
 
-property kSheetTimeout : 30 -- ждать диалог "Настройки экспорта", сек
+property kSheetTimeout : 60 -- ждать диалог "Настройки экспорта", сек
 property kSaveSheetTimeout : 30 -- ждать save sheet после "Далее…", сек
 property kRenderTimeout : 3600 -- максимум на один файл, сек
 property kStableSeconds : 5 -- сколько секунд .mp4 должен иметь стабильный размер
 property kPollInterval : 1.0 -- период опроса файла, сек
-property kBetweenFilesDelay : 1.0
+property kBetweenFilesDelay : 1.5
+property kExportEnabledTimeout : 120 -- ждать активации пункта Export в меню, сек
+property kPostOpenDelay : 2.0 -- базовая пауза после open перед попыткой Export
+property kExportRetries : 3 -- сколько раз пробуем триггернуть Export, если sheet не открылся
 
 ------------------------------------------------------------------------------
 
@@ -292,7 +295,9 @@ on mainLoop(sources)
 			set end of failed to src & "  →  " & errMsg & " (" & errNum & ")"
 			my logLine("ОШИБКА: " & src & " — " & errMsg)
 			my dismissAnySheet()
+			delay 0.5
 			my closeFrontDocument()
+			delay 1.0
 		end try
 	end repeat
 
@@ -404,28 +409,61 @@ end baseNameWithoutExt
 ------------------------------------------------------------------------------
 
 on renderOne(srcPosix, outFolderPosix, baseName)
+	tell application kAppName to activate
 	tell application kAppName to open (POSIX file srcPosix)
-	delay 1.5
+	delay kPostOpenDelay
 	my waitForDocumentLoaded()
 
-	my triggerExport()
-	my waitForExportSheet()
+	-- Ждём, пока пункт меню 'Экспорт…' станет активным — это означает, что
+	-- GoPro Player закончил декодирование и готов экспортировать.
+	-- На сетевых/внешних томах декодирование .360 может занимать
+	-- десятки секунд — без этого ожидания мы клацаем по неактивному меню,
+	-- sheet не появляется и потом срабатывает таймаут (-2700).
+	my waitForExportEnabled()
+
+	-- Триггерим экспорт; до 3 попыток, если sheet не появился.
+	set sheetOpened to false
+	repeat with attempt from 1 to kExportRetries
+		my triggerExport()
+		if my pollExportSheet(8) then
+			set sheetOpened to true
+			exit repeat
+		end if
+		my logLine("Sheet не появился (попытка " & attempt & "), повторяю…")
+		delay 1.5
+		-- Возвращаем фокус, иногда macOS «съедает» меню при первом клике.
+		tell application kAppName to activate
+		delay 0.5
+	end repeat
+
+	if not sheetOpened then
+		my waitForExportSheet() -- финальный длинный ожид (даст ошибку с таймаутом)
+	end if
+
 	my expandAdvancedSection()
 	my applyAllSettings()
 
-	-- Жмём "Далее…" — переход к save sheet.
 	my clickButtonByNames(my exportContainer(), {"Далее…", "Далее...", "Next…", "Next..."})
 
-	-- Save sheet с именем и папкой.
 	my waitForSaveSheet()
 	my setSaveFileName(baseName & ".mp4")
 	my navigateSaveSheetToFolder(outFolderPosix)
 	my clickButtonByNames(my saveSheet(), {"Сохранить", "Save", "Экспорт", "Export"})
 
-	-- Закрываем документ — рендер пойдёт в фоне очереди GoPro Player.
 	delay 1.0
 	my closeFrontDocument()
 end renderOne
+
+on pollExportSheet(seconds)
+	-- Возвращает true, если в течение seconds секунд появился контейнер экспорта.
+	set elapsed to 0
+	repeat while elapsed < seconds
+		if (my exportContainer()) is not missing value then return true
+		delay 0.25
+		set elapsed to elapsed + 0.25
+	end repeat
+	return false
+end pollExportSheet
 
 ------------------------------------------------------------------------------
 -- ОЖИДАНИЕ ОКОНЧАНИЯ РЕНДЕРА
@@ -511,13 +549,48 @@ end deleteSource
 on waitForDocumentLoaded()
 	tell application "System Events"
 		tell process kAppName
-			repeat 30 times
+			repeat 60 times
 				if (exists window 1) then exit repeat
-				delay 0.2
+				delay 0.25
 			end repeat
 		end tell
 	end tell
 end waitForDocumentLoaded
+
+on waitForExportEnabled()
+	-- Ждём, пока пункт меню Экспорт станет активным (enabled = true).
+	-- На сетевом томе .360 файл сначала «прогревается» — пока этот пункт
+	-- не активен, кликать в него бессмысленно: System Events не откроет
+	-- меню, но и ошибки не вернёт.
+	set elapsed to 0
+	repeat while elapsed < kExportEnabledTimeout
+		set isEnabled to my exportMenuEnabled()
+		if isEnabled then return
+		delay 0.5
+		set elapsed to elapsed + 0.5
+	end repeat
+	my logLine("ВНИМАНИЕ: пункт Экспорт не активировался за " & kExportEnabledTimeout & " сек — пробую всё равно.")
+end waitForExportEnabled
+
+on exportMenuEnabled()
+	tell application "System Events"
+		tell process kAppName
+			repeat with menuName in {"Файл", "File"}
+				repeat with itemName in {"Экспорт…", "Экспорт...", "Export…", "Export..."}
+					try
+						set mi to menu item (itemName as text) of menu (menuName as text) of menu bar 1
+						if exists mi then
+							try
+								return (enabled of mi as boolean)
+							end try
+						end if
+					end try
+				end repeat
+			end repeat
+		end tell
+	end tell
+	return false
+end exportMenuEnabled
 
 on triggerExport()
 	tell application "System Events"
@@ -530,11 +603,15 @@ on triggerExport()
 						try
 							click menu item (itemName as text) of menu (menuName as text) of menu bar 1
 							set ok to true
+							my logLine("triggerExport: клик по '" & (itemName as text) & "' OK")
 						end try
 					end if
 				end repeat
 			end repeat
-			if not ok then keystroke "e" using {command down}
+			if not ok then
+				my logLine("triggerExport: меню недоступно, шлю ⌘E")
+				keystroke "e" using {command down}
+			end if
 		end tell
 	end tell
 end triggerExport
