@@ -1,8 +1,44 @@
 # AppleScript для GoPro Player
 
-Набор AppleScript-сценариев для автоматизации [GoPro Player](https://gopro.com/en/us/shop/quik-gopro-player-mac-apps) на macOS: открытие файлов, управление воспроизведением, полноэкранный режим, перемотка, пакетный импорт и экспорт.
+Набор AppleScript-сценариев для автоматизации [GoPro Player](https://gopro.com/en/us/shop/quik-gopro-player-mac-apps) на macOS: открытие файлов, управление воспроизведением, полноэкранный режим, перемотка, пакетный импорт и **массовая конвертация `.360` → `.mp4`**.
 
 > GoPro Player не предоставляет полноценный AppleScript-словарь, поэтому большинство команд реализованы через GUI-скриптинг (`System Events`). Это значит, что приложение должно быть запущено и активно, а Терминалу/скриптовому хосту нужно дать права в **System Settings → Privacy & Security → Accessibility**.
+
+## Быстрый старт: рендер `.360` → `.mp4` с удалением исходников
+
+Для иерархии вида:
+
+```
+Evropolis/
+└── EP_2026-04-26_244_…@gmail.com/
+    ├── 1/
+    │   └── GS010705.360
+    └── 2/
+        └── GS010712.360
+```
+
+рекомендуемый сценарий:
+
+```bash
+# 1. Открыть Терминал.
+# 2. Перейти в репозиторий со скриптами.
+cd /path/to/this/repo
+
+# 3. Один раз дать Terminal'у права в:
+#    System Settings → Privacy & Security → Accessibility (флажок Terminal)
+#    System Settings → Privacy & Security → Automation → Terminal → GoPro Player + Finder + System Events
+
+# 4. Запустить:
+osascript scripts/gopro_render_then_delete_360.applescript ~/Movies/Evropolis
+```
+
+Скрипт рекурсивно найдёт **все** `.360` внутри `Evropolis` (включая `1/GS010705.360`, `2/GS010712.360` и т. д.), отрендерит их **по одному**, **`.mp4` сохранит в ту же папку** где лежал исходник, дождётся окончания рендера и **удалит исходный `.360` в Корзину**. Логи прогресса:
+
+```bash
+tail -f /tmp/gopro_360_to_mp4.log
+```
+
+Подробности и параметры — ниже в разделе [«Конвертация `.360` → `.mp4` по одному файлу с удалением исходников»](#конвертация-360--mp4-по-одному-файлу-с-удалением-исходников).
 
 ## Состав
 
@@ -84,7 +120,17 @@ goproLib's exportCurrent()
 
 ### Куда сохраняется результат
 
-В `kOutputFolder` (если пусто — спросит при запуске). Имя выходного файла — `<имя_исходника>.mp4`. Если такой `.mp4` уже существует и непустой, рендер пропускается, а исходник всё равно удаляется (можно использовать как «дочистку» после прерванного прогона).
+Управляется двумя свойствами в начале файла:
+
+```applescript
+property kSaveNextToSource : true   -- сохранять рядом с исходником
+property kOutputFolder    : ""      -- используется только если выше false
+```
+
+- **`kSaveNextToSource = true`** *(по умолчанию)* — каждый `.mp4` ложится **в ту же папку**, где лежит исходный `.360`. Идеально для иерархий вида `Evropolis/EP_…/1/GS010705.360` — рендер появится прямо в `1/`. Скрипт автоматически выберет этот каталог в save-sheet через `⇧⌘G` (Go to Folder).
+- **`kSaveNextToSource = false`** — все `.mp4` идут в одну папку `kOutputFolder`. Если она пустая, скрипт спросит её один раз на запуск.
+
+GoPro Player сам формирует имя выходного файла. У современных версий это либо `<original_name>.mp4`, либо `<original_name>_<timestamp>.mp4` (вида `GS010712_2026-04-30_08-59-40-032.mp4`). Скрипт делает «снимок» списка `.mp4` в выходной папке **до** рендера и затем ловит **новый появившийся файл** — поэтому корректно работает с обоими шаблонами имён.
 
 ### Что происходит с исходником
 
@@ -113,13 +159,107 @@ goproLib's exportCurrent()
 
 Это надёжно работает даже если GoPro Player в это время уже подхватил следующий файл из очереди — нас интересует именно конкретный `.mp4`.
 
-### Запуск
+### Полная инструкция запуска (с нуля)
+
+**Шаг 1. Получить файлы скрипта.**
 
 ```bash
-osascript scripts/gopro_render_then_delete_360.applescript                 # с диалогами
-osascript scripts/gopro_render_then_delete_360.applescript ~/Footage/Max   # с папкой
+git clone https://github.com/clouderefresh-arch/reposii.git ~/gopro-applescript
+cd ~/gopro-applescript
+```
+
+(Можно и просто скачать файл `scripts/gopro_render_then_delete_360.applescript` куда угодно — пути в скрипте не привязаны к репозиторию.)
+
+**Шаг 2. (Опционально) поправить настройки в шапке скрипта.**
+
+Откройте в любом редакторе или в **Script Editor.app**:
+
+```bash
+open -a "Script Editor" scripts/gopro_render_then_delete_360.applescript
+```
+
+Главные свойства, на которые стоит обратить внимание:
+
+```applescript
+property kSourceFolder    : ""        -- можно жёстко прописать корень
+property kSaveNextToSource: true      -- сохранять рядом с .360
+property kOutputFolder    : ""        -- используется только если выше false
+property kDeleteMode      : "trash"   -- "trash" | "rm" | "none"
+
+property kResolution      : "4K"      -- "5,6K" | "4K" | "Пользовательский"
+property kCodec           : "H.264"   -- "HEVC" | "H.264" | "ProRes"
+
+property kWorldLock       : false
+property kHorizonLine     : true
+property kAntiShake       : true
+property kMountOptimize   : false
+
+property kSpeedSlider     : 0.7       -- ползунки 0..1
+property kQualitySlider   : 0.5
+property kFileSizeSlider  : 0.8
+property kBitrate         : 0.5
+property kDenoiseEnabled  : false
+property kDenoiseLevel    : 0.5
+```
+
+Любому слайдеру/чекбоксу можно поставить `missing value` — тогда скрипт оставит то значение, которое уже выбрано в плеере.
+
+**Шаг 3. Выдать права macOS.**
+
+GoPro Player управляется через GUI-скриптинг, поэтому Terminal (или Script Editor — кому чем удобнее запускать) должен иметь:
+
+- **System Settings → Privacy & Security → Accessibility** — поставить флажок напротив `Terminal` (или `Script Editor`/`Automator`/чем запускаете).
+- **System Settings → Privacy & Security → Automation** — внутри `Terminal` разрешить управление приложениями `GoPro Player`, `Finder`, `System Events`. Эти запросы macOS покажет автоматически при первом запуске.
+
+Если этого не сделать, скрипт упадёт с ошибкой `-1719` или `-25211`.
+
+**Шаг 4. Закрыть лишние окна GoPro Player.**
+
+Чтобы скрипт не путался, перед запуском желательно закрыть все открытые в плеере клипы. Достаточно нажать ⌘W в каждом окне или `GoPro Player → Quit GoPro Player`.
+
+**Шаг 5. Запустить.**
+
+```bash
+# с диалогом выбора корневой папки
+osascript scripts/gopro_render_then_delete_360.applescript
+
+# или сразу с папкой (рекурсивно найдёт все .360 во всех подпапках)
+osascript scripts/gopro_render_then_delete_360.applescript ~/Movies/Evropolis
+
+# или с одним конкретным файлом
+osascript scripts/gopro_render_then_delete_360.applescript ~/Movies/Evropolis/EP_…/1/GS010705.360
+```
+
+Параллельно полезно открыть лог:
+
+```bash
 tail -f /tmp/gopro_360_to_mp4.log
 ```
+
+**Шаг 6. (Удобно) сделать «капельницу» (droplet).**
+
+В **Script Editor.app**: `File → Export…` → `File Format: Application` → сохраните, например, как `GoPro 360 Render.app` на рабочий стол. После этого вы можете просто **перетаскивать на иконку приложения**:
+
+- одну корневую папку (вроде `Evropolis/`) — обработает всё внутри;
+- набор `.360` файлов — обработает только их;
+- даже отдельный `.360` — отрендерит его и удалит.
+
+При первом перетаскивании macOS попросит дать самому приложению `Accessibility` и `Automation` — нужно подтвердить.
+
+### Что увидит пользователь во время работы
+
+1. Открывается окно GoPro Player с первым `.360`.
+2. Появляется диалог «Настройки экспорта» — скрипт выставляет в нём radio-кнопки, чекбоксы, слайдеры.
+3. Жмётся «Далее…», в save-sheet:
+   - имя файла подставляется как `<original>.mp4`;
+   - переходит в нужную папку через `⇧⌘G`;
+   - жмётся «Сохранить».
+4. Окно клипа закрывается, рендер идёт в фоне очереди GoPro Player.
+5. Скрипт ждёт появления нового `.mp4` в выходной папке, а затем — пока его размер не перестанет расти 5 секунд подряд.
+6. Только после этого исходник `.360` отправляется в Корзину (или удаляется по `kDeleteMode`).
+7. Открывается следующий клип, цикл повторяется.
+
+В конце прохода — нотификация со сводкой; при ошибках появится диалог со списком проблемных файлов.
 
 > **Совет**: первый прогон сделайте с `kDeleteMode : "none"` или `"trash"`, чтобы убедиться, что параметры рендера и пути выбраны правильно. `"rm"` ставьте, только когда уверены.
 

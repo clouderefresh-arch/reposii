@@ -17,9 +17,12 @@
 --
 -- КУДА СОХРАНЯЕТСЯ РЕЗУЛЬТАТ
 -- ──────────────────────────
--- В свойство kOutputFolder. Если оно пустое — спросит при первом запуске
--- и запомнит на текущий процесс (но не на следующие — задайте его, если
--- хотите запускать без вопросов).
+-- Управляется свойствами kSaveNextToSource и kOutputFolder:
+--   kSaveNextToSource = true  → каждый .mp4 сохраняется В ТУ ЖЕ ПАПКУ,
+--                                где лежит исходный .360 (рекомендуется
+--                                для иерархий вида Project/Subfolder/N/X.360).
+--   kSaveNextToSource = false → все .mp4 идут в одну папку kOutputFolder
+--                                (если пустая — скрипт спросит при запуске).
 --
 -- УДАЛЕНИЕ ИСХОДНИКА
 -- ──────────────────
@@ -40,7 +43,12 @@ property kAppName : "GoPro Player"
 -- Жёстко прописанная папка с исходниками (POSIX-путь). Пусто = спросить.
 property kSourceFolder : ""
 
--- Папка для рендеренных .mp4. Пусто = спросить один раз при запуске.
+-- true — сохранять рядом с исходником (в его же папку). Это то, что нужно
+-- при иерархиях вида Project/.../1/X.360 — рендер появится прямо там.
+property kSaveNextToSource : true
+
+-- Используется только если kSaveNextToSource = false.
+-- Пусто = спросить один раз при запуске.
 property kOutputFolder : ""
 
 -- Что делать с исходным .360 после успешного рендера.
@@ -196,8 +204,12 @@ on mainLoop(sources)
 		return
 	end if
 
-	set outFolder to my resolveOutputFolder()
-	if outFolder is missing value then return
+	-- Если kSaveNextToSource = false и kOutputFolder пуст — спросим один раз.
+	set globalOutFolder to missing value
+	if not kSaveNextToSource then
+		set globalOutFolder to my resolveGlobalOutputFolder()
+		if globalOutFolder is missing value then return
+	end if
 
 	display notification "К обработке: " & total & " файлов" with title "GoPro 360 → MP4"
 
@@ -211,29 +223,37 @@ on mainLoop(sources)
 		set src to srcRef as text
 		set processed to processed + 1
 		set baseName to my baseNameWithoutExt(src)
-		set targetMp4 to outFolder & "/" & baseName & ".mp4"
+
+		-- Куда сохранять именно этот файл.
+		if kSaveNextToSource then
+			set outFolder to my parentFolder(src)
+		else
+			set outFolder to globalOutFolder
+		end if
 
 		try
-			my logLine("[" & processed & "/" & total & "] Старт: " & src)
+			my logLine("[" & processed & "/" & total & "] Старт: " & src & "  →  " & outFolder)
 
-			-- Если .mp4 уже существует — не перерендериваем, но удаляем исходник.
-			if my fileExists(targetMp4) and (my fileSize(targetMp4) > 0) then
-				my logLine("Уже существует, пропускаю рендер: " & targetMp4)
-			else
-				my renderOne(src, outFolder, baseName)
-				my waitForOutputStable(targetMp4)
-			end if
+			-- Запоминаем "снимок" .mp4-файлов в outFolder ДО рендера —
+			-- чтобы потом найти именно вновь появившийся файл (GoPro Player
+			-- умеет добавлять timestamp-суффикс к имени, например
+			-- GS010712_2026-04-30_08-59-40-032.mp4).
+			set beforeMp4s to my listMp4s(outFolder)
 
-			-- Финальная проверка.
-			if not my fileExists(targetMp4) then
-				error "Выходной файл не создан: " & targetMp4
+			my renderOne(src, outFolder, baseName)
+
+			set producedMp4 to my waitForNewMp4(outFolder, beforeMp4s)
+			my waitForOutputStable(producedMp4)
+
+			if not my fileExists(producedMp4) then
+				error "Выходной файл не создан"
 			end if
-			if (my fileSize(targetMp4)) < 1024 then
-				error "Выходной файл слишком маленький, рендер скорее всего сорван: " & targetMp4
+			if (my fileSize(producedMp4)) < 1024 then
+				error "Выходной файл слишком маленький, рендер сорван: " & producedMp4
 			end if
 
 			my deleteSource(src)
-			my logLine("Готово: " & src & " → " & targetMp4)
+			my logLine("Готово: " & src & "  →  " & producedMp4)
 
 			delay kBetweenFilesDelay
 		on error errMsg number errNum
@@ -244,7 +264,8 @@ on mainLoop(sources)
 		end try
 	end repeat
 
-	set summary to "Обработано: " & ((count of sources) - (count of failed)) & " из " & total
+	set okCount to total - (count of failed)
+	set summary to "Обработано: " & okCount & " из " & total
 	if failed is {} then
 		display notification summary with title "GoPro 360 → MP4"
 	else
@@ -256,7 +277,7 @@ on mainLoop(sources)
 	end if
 end mainLoop
 
-on resolveOutputFolder()
+on resolveGlobalOutputFolder()
 	if kOutputFolder is not "" then return kOutputFolder
 	try
 		set f to choose folder with prompt "Выберите папку для сохранения .mp4"
@@ -264,7 +285,65 @@ on resolveOutputFolder()
 	on error
 		return missing value
 	end try
-end resolveOutputFolder
+end resolveGlobalOutputFolder
+
+on parentFolder(posixPath)
+	set AppleScript's text item delimiters to "/"
+	set parts to text items of posixPath
+	if (count of parts) ≤ 1 then
+		set AppleScript's text item delimiters to ""
+		return "/"
+	end if
+	set parents to items 1 thru -2 of parts
+	set joined to parents as text
+	set AppleScript's text item delimiters to ""
+	if joined is "" then return "/"
+	return joined
+end parentFolder
+
+on listMp4s(folderPosix)
+	-- Возвращает множество имён .mp4 в папке (без рекурсии).
+	try
+		set raw to do shell script "/bin/ls -1 " & my shellQuote(folderPosix) & " 2>/dev/null | /usr/bin/grep -i '\\.mp4$' || true"
+	on error
+		return {}
+	end try
+	if raw is "" then return {}
+	set AppleScript's text item delimiters to (ASCII character 10)
+	set items_ to text items of raw
+	set AppleScript's text item delimiters to ""
+	set out to {}
+	repeat with i in items_
+		set s to i as text
+		if s is not "" then set end of out to s
+	end repeat
+	return out
+end listMp4s
+
+on waitForNewMp4(folderPosix, beforeList)
+	-- Ждём, пока в папке появится новый .mp4 которого не было в beforeList.
+	-- Возвращает абсолютный POSIX-путь к нему.
+	set elapsed to 0
+	repeat while elapsed < kSaveSheetTimeout + 60 -- даём чуть больше времени, рендер мог стартовать с задержкой
+		set current to my listMp4s(folderPosix)
+		repeat with c in current
+			set cs to c as text
+			if not (my listContains(beforeList, cs)) then
+				return folderPosix & "/" & cs
+			end if
+		end repeat
+		delay 1.0
+		set elapsed to elapsed + 1.0
+	end repeat
+	error "В папке не появился новый .mp4 файл: " & folderPosix
+end waitForNewMp4
+
+on listContains(lst, value)
+	repeat with x in lst
+		if (x as text) is (value as text) then return true
+	end repeat
+	return false
+end listContains
 
 on baseNameWithoutExt(posixPath)
 	set AppleScript's text item delimiters to "/"
