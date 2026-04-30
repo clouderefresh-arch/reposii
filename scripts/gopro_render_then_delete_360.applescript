@@ -542,7 +542,8 @@ on clickSaveButton()
 	set targetBtn to missing value
 
 	-- 1. По известным AXIdentifier.
-	repeat with axId in {"saveButton", "saveExport", "exportSave", "startExport", "exportStart", "nextButton", "exportNext"}
+	-- OKButton — стандартный NSSavePanel default-кнопка (Сохранить).
+	repeat with axId in {"OKButton", "saveButton", "saveExport", "exportSave", "startExport", "exportStart", "nextButton", "exportNext"}
 		set targetBtn to my findButtonByAxIdInSheet(axId as text)
 		if targetBtn is not missing value then
 			my logLine("clickSaveButton: найден по axId='" & (axId as text) & "'")
@@ -774,14 +775,26 @@ on findButtonByAxIdInSheet(axId)
 end findButtonByAxIdInSheet
 
 on findButtonByNameInSheet(btnName)
+	-- Возвращает кнопку только если она реально существует.
+	-- AppleScript любит возвращать специфайер даже для несуществующих кнопок,
+	-- поэтому проверяем явно через exists и через перебор всех кнопок.
 	tell application "System Events"
 		tell process kAppName
 			try
 				if (count of windows) is 0 then return missing value
 				set w1 to window 1
 				if (exists sheet 1 of w1) then
+					set targetSheet to sheet 1 of w1
+					-- Проход по всем кнопкам (надёжнее, чем по имени).
 					try
-						return button btnName of sheet 1 of w1
+						set btns to every button of targetSheet
+						repeat with bRef in btns
+							set bEl to (contents of bRef)
+							try
+								set thisName to name of bEl
+								if thisName is not missing value and (thisName as text) is (btnName as text) then return bEl
+							end try
+						end repeat
 					end try
 				end if
 			end try
@@ -1450,17 +1463,20 @@ on waitForSaveSheet()
 end waitForSaveSheet
 
 on saveSheet()
-	-- Возвращает контейнер save-dialog'а: либо sheet 1 of window 1,
-	-- либо отдельное окно с text field (save panel как separate dialog).
+	-- Возвращает контейнер save-dialog'а. Это либо sheet поверх окна клипа,
+	-- либо (редко) отдельное окно. Признаком save-sheet считаем наличие
+	-- кнопки с AXId=OKButton/CancelButton (стандартный NSSavePanel) или
+	-- кнопки по имени Сохранить/Save.
 	tell application "System Events"
 		tell process kAppName
 			try
 				if (count of windows) is 0 then return missing value
 				-- Вариант A: sheet поверх окна клипа.
 				if (exists sheet 1 of window 1) then
-					return sheet 1 of window 1
+					set sh to sheet 1 of window 1
+					if my sheetLooksLikeSave(sh) then return sh
 				end if
-				-- Вариант B: отдельное окно — берём first frontmost окно с text field.
+				-- Вариант B: отдельное окно с text field (separate save panel).
 				set wins to every window
 				repeat with wRef in wins
 					set wEl to (contents of wRef)
@@ -1473,6 +1489,34 @@ on saveSheet()
 	end tell
 	return missing value
 end saveSheet
+
+on sheetLooksLikeSave(sh)
+	-- True если в sheet есть кнопка OKButton (NSSavePanel) или одно из
+	-- знакомых имён сохранения, либо есть text field (поле имени файла).
+	tell application "System Events"
+		try
+			set btns to every button of sh
+			repeat with bRef in btns
+				set bEl to (contents of bRef)
+				try
+					set bAx to value of attribute "AXIdentifier" of bEl
+					if bAx is "OKButton" or bAx is "saveButton" then return true
+				end try
+				try
+					set bN to name of bEl
+					if bN is not missing value then
+						set bNT to bN as text
+						if bNT is "Сохранить" or bNT is "Save" or bNT is "Готово" or bNT is "Done" then return true
+					end if
+				end try
+			end repeat
+		end try
+		try
+			if (exists text field 1 of sh) then return true
+		end try
+	end tell
+	return false
+end sheetLooksLikeSave
 
 on setSaveFileName(newName)
 	set s to my saveSheet()
