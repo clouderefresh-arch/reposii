@@ -90,8 +90,11 @@ property kBetweenFilesDelay : 1.0
 -- Запуск из osascript / Script Editor / двойным кликом.
 on run argv
 	try
-		my logLine("RUN: argv count = " & (count of argv))
-		set sources to my resolveSourceList(argv)
+		-- При двойном клике .app argv может быть missing value, а не пустым
+		-- списком — нужно нормализовать, иначе (count of argv) даёт -1708.
+		set argList to my normalizeList(argv)
+		my logLine("RUN: argv count = " & (count of argList))
+		set sources to my resolveSourceList(argList)
 		my logLine("RUN: найдено .360 файлов: " & (count of sources))
 		my mainLoop(sources)
 	on error errMsg number errNum
@@ -105,8 +108,9 @@ end run
 -- Запуск как droplet: перетащить папку или .360 файлы на сохранённый .app.
 on open droppedItems
 	try
-		my logLine("OPEN: дропнуто элементов: " & (count of droppedItems))
-		set sources to my expandDropped(droppedItems)
+		set droppedList to my normalizeList(droppedItems)
+		my logLine("OPEN: дропнуто элементов: " & (count of droppedList))
+		set sources to my expandDropped(droppedList)
 		my logLine("OPEN: найдено .360 файлов: " & (count of sources))
 		my mainLoop(sources)
 	on error errMsg number errNum
@@ -116,6 +120,15 @@ on open droppedItems
 		end try
 	end try
 end open
+
+on normalizeList(maybeList)
+	if maybeList is missing value then return {}
+	try
+		if class of maybeList is list then return maybeList
+	end try
+	-- Любое одиночное значение (например, alias) превращаем в список из одного элемента.
+	return {maybeList}
+end normalizeList
 
 ------------------------------------------------------------------------------
 -- ОПРЕДЕЛЕНИЕ ИСТОЧНИКА
