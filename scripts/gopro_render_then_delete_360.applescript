@@ -1975,33 +1975,37 @@ end selectRadio
 on collectRadios(container)
 	set out to {}
 	tell application "System Events"
-		try
-			set rgs to every radio group of container
-			repeat with rgRef in rgs
-				try
-					set rbs to every radio button of (contents of rgRef)
-					repeat with rbRef in rbs
-						set end of out to rbRef
-					end repeat
-				end try
-			end repeat
-		end try
-		try
-			set extra to every radio button of container
-			repeat with rbRef in extra
-				set end of out to rbRef
-			end repeat
-		end try
+		tell process kAppName
+			try
+				set rgs to every radio group of container
+				repeat with rgRef in rgs
+					try
+						set rbs to every radio button of (contents of rgRef)
+						repeat with rbRef in rbs
+							set end of out to rbRef
+						end repeat
+					end try
+				end repeat
+			end try
+			try
+				set extra to every radio button of container
+				repeat with rbRef in extra
+					set end of out to rbRef
+				end repeat
+			end try
+		end tell
 	end tell
 	return out
 end collectRadios
 
 on setCheckboxByName(container, labels, desiredOn)
+	set boxes to {}
 	tell application "System Events"
-		set boxes to {}
-		try
-			set boxes to every checkbox of container
-		end try
+		tell process kAppName
+			try
+				set boxes to every checkbox of container
+			end try
+		end tell
 	end tell
 	repeat with cbRef in boxes
 		set cb to (contents of cbRef)
@@ -2122,6 +2126,7 @@ on setSliderByLabel(container, labels, normalizedValue)
 	if normalizedValue < 0 then set normalizedValue to 0
 	if normalizedValue > 1 then set normalizedValue to 1
 	tell application "System Events"
+		tell process kAppName
 		set targetSlider to missing value
 
 		try
@@ -2204,11 +2209,10 @@ on setSliderByLabel(container, labels, normalizedValue)
 			set ss to size of targetSlider
 			set sx to ((item 1 of sp) as integer) + ((item 1 of ss) as integer) * normalizedValue
 			set sy to ((item 2 of sp) as integer) + ((item 2 of ss) as integer) / 2
-			tell process kAppName
-				click at {sx as integer, sy as integer}
-			end tell
+			click at {sx as integer, sy as integer}
 			delay 0.15
 		end try
+		end tell
 	end tell
 end setSliderByLabel
 
