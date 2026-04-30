@@ -514,9 +514,21 @@ on renderOne(srcPosix, outFolderPosix, baseName)
 	my logLine("UI после 'Далее...' записан в /tmp/gopro_after_next.txt")
 
 	my waitForSaveSheet()
+	my logLine("waitForSaveSheet: save-sheet появился")
+
 	-- Сначала навигируем в нужную папку (через Cmd+Shift+G), потом задаём имя.
 	-- Порядок важен: после Go to Folder фокус переходит в поле имени.
 	my navigateSaveSheetToFolder(outFolderPosix)
+
+	-- Убеждаемся, что sheet ещё на экране (Enter после Cmd+Shift+G мог
+	-- случайно его подтвердить если в pbcopy пустая строка попала).
+	if not (my saveSheetStillVisible()) then
+		my logLine("ВНИМАНИЕ: save-sheet закрылся после navigateSaveSheetToFolder — рендер уже стартовал в дефолтной папке")
+		delay 1.0
+		my closeFrontDocument()
+		return
+	end if
+
 	my setSaveFileName(baseName & ".mp4")
 	delay 0.5
 
@@ -581,6 +593,8 @@ on clickSaveButton()
 	if targetBtn is missing value then
 		my logLine("clickSaveButton: кнопка не найдена. Делаю дамп UI…")
 		my dumpUIState("/tmp/gopro_save_state.txt", "(save state)", "save button not found")
+		-- Также пишем все кнопки прямо в основной лог.
+		my logCurrentSheetButtons()
 		return false
 	end if
 
@@ -825,6 +839,58 @@ on findDefaultButtonInSheet()
 	end tell
 	return missing value
 end findDefaultButtonInSheet
+
+on logCurrentSheetButtons()
+	-- Логирует список всех кнопок, видимых сейчас в окне 1 / sheet 1 /
+	-- любом окне процесса. Помогает диагностировать, почему clickSaveButton
+	-- ничего не нашёл: возможно sheet уже закрылся, или это другой sheet.
+	tell application "System Events"
+		tell process kAppName
+			try
+				set wins to every window
+				my logLine("logSheetButtons: всего окон=" & (count of wins))
+				repeat with wRef in wins
+					set wEl to (contents of wRef)
+					set wName to ""
+					try
+						set wName to name of wEl as text
+					end try
+					my logLine("  WINDOW: '" & wName & "'")
+					try
+						if (exists sheet 1 of wEl) then
+							set sh to sheet 1 of wEl
+							my logLine("    SHEET 1 присутствует")
+							try
+								set btns to every button of sh
+								my logLine("    SHEET buttons: " & (count of btns))
+								repeat with bRef in btns
+									set bEl to (contents of bRef)
+									set bName to ""
+									set bAx to ""
+									set bEn to "?"
+									try
+										set bName to name of bEl as text
+									end try
+									try
+										set bAx to value of attribute "AXIdentifier" of bEl as text
+									end try
+									try
+										set bEn to enabled of bEl as text
+									end try
+									my logLine("      - name='" & bName & "' axId='" & bAx & "' enabled=" & bEn)
+								end repeat
+							end try
+						else
+							my logLine("    (sheet 1 отсутствует)")
+						end if
+					end try
+				end repeat
+			on error eMsg
+				my logLine("logSheetButtons: ERR: " & eMsg)
+			end try
+		end tell
+	end tell
+end logCurrentSheetButtons
 
 on findSaveButtonInAnyWindow()
 	-- Если save-dialog открылся как отдельное окно (не sheet), ищем кнопку
@@ -1568,19 +1634,51 @@ on pasteIntoFocus(theStr)
 	-- Не зависит от раскладки клавиатуры — это критично, потому что
 	-- keystroke шлёт нажатия физических клавиш, и латинский "/" на
 	-- русской раскладке превращается в "|", а буквы — в кириллицу.
+	set strText to theStr as text
+	if strText is "" then
+		my logLine("pasteIntoFocus: пустая строка, пропускаю")
+		return
+	end if
+
+	-- Способ 1: AppleScript clipboard. Самый прямой путь, без shell.
+	set ok to false
 	try
-		do shell script "/bin/echo -n " & quoted form of (theStr as text) & " | /usr/bin/pbcopy"
+		set the clipboard to strText
+		set ok to true
 	end try
-	delay 0.15
+	-- Способ 2: pbcopy через временный файл (надёжно для путей с "/", "@").
+	if not ok then
+		try
+			set tmpFile to "/tmp/gopro_paste_buf.txt"
+			do shell script "cat > " & quoted form of tmpFile & " <<'GOPRO_EOF'
+" & strText & "
+GOPRO_EOF"
+			-- Уберём финальный \n который heredoc добавляет.
+			do shell script "/usr/bin/perl -pi -e 'chomp if eof' " & quoted form of tmpFile
+			do shell script "/usr/bin/pbcopy < " & quoted form of tmpFile
+			set ok to true
+		end try
+	end if
+
+	if not ok then
+		my logLine("pasteIntoFocus: не удалось положить в clipboard, fallback на keystroke")
+		tell application "System Events"
+			tell process kAppName
+				keystroke strText
+			end tell
+		end tell
+		return
+	end if
+
+	delay 0.2
 	tell application "System Events"
 		tell process kAppName
-			-- Очищаем поле, потом вставляем.
 			keystroke "a" using {command down}
 			delay 0.1
 			keystroke "v" using {command down}
 		end tell
 	end tell
-	delay 0.2
+	delay 0.25
 end pasteIntoFocus
 
 on clickButtonByNames(container, names)
