@@ -1444,8 +1444,12 @@ on centerOf(uiEl)
 			try
 				set posVal to position of uiEl
 				set sizeVal to size of uiEl
-				set cx to ((item 1 of posVal) as integer) + ((item 1 of sizeVal) as integer) div 2
-				set cy to ((item 2 of posVal) as integer) + ((item 2 of sizeVal) as integer) div 2
+				set px to (item 1 of posVal) as integer
+				set py to (item 2 of posVal) as integer
+				set sw to (item 1 of sizeVal) as integer
+				set sh2 to (item 2 of sizeVal) as integer
+				set cx to px + (sw div 2)
+				set cy to py + (sh2 div 2)
 				return {cx, cy}
 			end try
 		end tell
@@ -1480,8 +1484,12 @@ on clickStaticTextLabeled(labelText)
 				if found is missing value then return false
 				set posVal to position of found
 				set sizeVal to size of found
-				set cx to ((item 1 of posVal) as integer) + ((item 1 of sizeVal) as integer) div 2
-				set cy to ((item 2 of posVal) as integer) + ((item 2 of sizeVal) as integer) div 2
+				set px to (item 1 of posVal) as integer
+				set py to (item 2 of posVal) as integer
+				set sw to (item 1 of sizeVal) as integer
+				set sh2 to (item 2 of sizeVal) as integer
+				set cx to px + (sw div 2)
+				set cy to py + (sh2 div 2)
 				my logLine("clickStaticTextLabeled('" & labelText & "'): " & cx & "," & cy)
 				tell application kAppName to activate
 				delay 0.15
@@ -1594,8 +1602,12 @@ on clickExportButton()
 			set posVal to position of theBtn
 			set sizeVal to size of theBtn
 		end tell
-		set cx to ((item 1 of posVal) as integer) + ((item 1 of sizeVal) as integer) div 2
-		set cy to ((item 2 of posVal) as integer) + ((item 2 of sizeVal) as integer) div 2
+		set px to (item 1 of posVal) as integer
+		set py to (item 2 of posVal) as integer
+		set sw to (item 1 of sizeVal) as integer
+		set sh2 to (item 2 of sizeVal) as integer
+		set cx to px + (sw div 2)
+		set cy to py + (sh2 div 2)
 		my logLine("clickExportButton: координаты центра кнопки = " & cx & "," & cy)
 
 		-- Активируем окно, чтобы клик пошёл по нему.
