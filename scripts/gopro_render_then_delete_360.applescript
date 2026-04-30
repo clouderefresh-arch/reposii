@@ -162,8 +162,10 @@ end toLower
 
 on collect360FromPath(rootPosix)
 	-- Рекурсивный поиск .360 без учёта регистра. Поддерживает и одиночный файл.
+	-- Отсекаем macOS AppleDouble-«дубли» вида ._GS010705.360 (служебные файлы
+	-- метаданных, которые macOS создаёт на не-APFS томах: NTFS / exFAT / NFS).
 	set escaped to my shellQuote(rootPosix)
-	set cmd to "if [ -d " & escaped & " ]; then /usr/bin/find " & escaped & " -type f -iname '*.360'; elif [ -f " & escaped & " ]; then echo " & escaped & "; fi"
+	set cmd to "if [ -d " & escaped & " ]; then /usr/bin/find " & escaped & " -type f -iname '*.360' -not -name '._*'; elif [ -f " & escaped & " ]; then echo " & escaped & "; fi"
 	try
 		set rawOutput to do shell script cmd
 	on error
@@ -175,12 +177,12 @@ on collect360FromPath(rootPosix)
 	set parts to text items of rawOutput
 	set AppleScript's text item delimiters to ""
 
-	set result to {}
+	set foundList to {}
 	repeat with p in parts
 		set s to p as text
-		if s is not "" then set end of result to s
+		if s is not "" then set end of foundList to s
 	end repeat
-	return result
+	return foundList
 end collect360FromPath
 
 on shellQuote(s)
@@ -302,19 +304,20 @@ end parentFolder
 
 on listMp4s(folderPosix)
 	-- Возвращает множество имён .mp4 в папке (без рекурсии).
+	-- AppleDouble-«дубли» (._файл.mp4) исключаем — это не настоящие видео.
 	try
-		set raw to do shell script "/bin/ls -1 " & my shellQuote(folderPosix) & " 2>/dev/null | /usr/bin/grep -i '\\.mp4$' || true"
+		set raw to do shell script "/bin/ls -1 " & my shellQuote(folderPosix) & " 2>/dev/null | /usr/bin/grep -i '\\.mp4$' | /usr/bin/grep -v '^\\._' || true"
 	on error
 		return {}
 	end try
 	if raw is "" then return {}
 	set AppleScript's text item delimiters to (ASCII character 10)
-	set items_ to text items of raw
+	set rawList to text items of raw
 	set AppleScript's text item delimiters to ""
 	set out to {}
-	repeat with i in items_
-		set s to i as text
-		if s is not "" then set end of out to s
+	repeat with rawItem in rawList
+		set lineStr to rawItem as text
+		if lineStr is not "" then set end of out to lineStr
 	end repeat
 	return out
 end listMp4s
@@ -323,12 +326,12 @@ on waitForNewMp4(folderPosix, beforeList)
 	-- Ждём, пока в папке появится новый .mp4 которого не было в beforeList.
 	-- Возвращает абсолютный POSIX-путь к нему.
 	set elapsed to 0
-	repeat while elapsed < kSaveSheetTimeout + 60 -- даём чуть больше времени, рендер мог стартовать с задержкой
-		set current to my listMp4s(folderPosix)
-		repeat with c in current
-			set cs to c as text
-			if not (my listContains(beforeList, cs)) then
-				return folderPosix & "/" & cs
+	repeat while elapsed < kSaveSheetTimeout + 60
+		set currentList to my listMp4s(folderPosix)
+		repeat with curRef in currentList
+			set curName to curRef as text
+			if not (my listContains(beforeList, curName)) then
+				return folderPosix & "/" & curName
 			end if
 		end repeat
 		delay 1.0
@@ -337,9 +340,9 @@ on waitForNewMp4(folderPosix, beforeList)
 	error "В папке не появился новый .mp4 файл: " & folderPosix
 end waitForNewMp4
 
-on listContains(lst, value)
-	repeat with x in lst
-		if (x as text) is (value as text) then return true
+on listContains(lst, needle)
+	repeat with xRef in lst
+		if (xRef as text) is (needle as text) then return true
 	end repeat
 	return false
 end listContains
