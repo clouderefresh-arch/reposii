@@ -472,24 +472,24 @@ on renderOne(srcPosix, outFolderPosix, baseName)
 	-- На сетевых/внешних томах это может занимать десятки секунд.
 	my waitForClipReady()
 
-	-- Триггерим экспорт через КНОПКУ "Экспорт" в окне клипа (AXId=exportButton).
-	-- Меню Файл → Экспорт в этой версии GoPro Player для .360 файлов всегда
-	-- disabled — экспорт делается только через кнопку в окне.
+	-- Триггерим экспорт. Внутри triggerExport уже последовательно пробуются
+	-- разные стратегии с проверкой результата после каждой. Если ни одна
+	-- не сработала, делаем общий ретрай.
 	set sheetOpened to false
 	repeat with attempt from 1 to kExportRetries
 		my triggerExport()
-		if my pollExportSheet(8) then
+		if my pollExportSheet(5) then
 			set sheetOpened to true
 			exit repeat
 		end if
-		my logLine("Sheet не появился (попытка " & attempt & "), повторяю…")
-		delay 1.5
+		my logLine("Sheet всё ещё не открыт (попытка " & attempt & "), пауза и повтор…")
+		delay 2.0
 		tell application kAppName to activate
 		delay 0.5
 	end repeat
 
 	if not sheetOpened then
-		my waitForExportSheet() -- финальный длинный ожид (даст ошибку с таймаутом)
+		my waitForExportSheet() -- даст ошибку с таймаутом и текстом
 	end if
 
 	my expandAdvancedSection()
@@ -650,26 +650,125 @@ on clipIsReady()
 end clipIsReady
 
 on triggerExport()
-	tell application "System Events"
-		set frontmost of process kAppName to true
-	end tell
+	-- Проверяем результат КАЖДОЙ стратегии через poll sheet, потому что
+	-- AXPress на AXUnknown часто возвращает true, но физически ничего
+	-- не нажимает. Стратегии идут от самых "вежливых" к самым жёстким.
+	tell application kAppName to activate
 	delay 0.3
 
-	-- Стратегия 1: AX-кнопка "Экспорт" в окне клипа (AXId=exportButton).
-	-- Это единственный надёжный путь для .360 файлов — пункт меню Файл→Экспорт
-	-- у GoPro Player для .360 всегда disabled.
-	if my clickExportButton() then
-		my logLine("triggerExport: AX-кнопка exportButton OK")
-		return
+	-- Получаем сам элемент кнопки.
+	set theBtn to my findExportButton()
+	set btnCoords to missing value
+	if theBtn is not missing value then
+		set btnCoords to my centerOf(theBtn)
+		my logLine("triggerExport: exportButton найден, центр = " & my coordsText(btnCoords))
+	else
+		my logLine("triggerExport: exportButton НЕ найден в окне")
 	end if
 
-	-- Стратегия 2: клик по статическому тексту с подписью "Экспорт".
-	if my clickStaticTextLabeled("Экспорт") then
-		my logLine("triggerExport: клик по static text Экспорт OK")
-		return
+	-- Стратегия 1: AXPress на самом элементе.
+	if theBtn is not missing value then
+		try
+			tell application "System Events" to perform action "AXPress" of theBtn
+			my logLine("strategy1: AXPress на exportButton отправлен")
+			if my pollExportSheet(2) then
+				my logLine("triggerExport: Sheet открылся после strategy1 (AXPress)")
+				return
+			end if
+		on error eMsg
+			my logLine("strategy1: AXPress fail: " & eMsg)
+		end try
 	end if
 
-	-- Стратегия 3: пункт меню Файл → Экспорт (вдруг для .mp4 он активен).
+	-- Стратегия 2: AXPress на дочерних AXImage / AXStaticText.
+	if theBtn is not missing value then
+		try
+			tell application "System Events"
+				set kids to every UI element of theBtn
+			end tell
+			repeat with kRef in kids
+				try
+					tell application "System Events" to perform action "AXPress" of (contents of kRef)
+					my logLine("strategy2: AXPress на дочернем элементе отправлен")
+					if my pollExportSheet(2) then
+						my logLine("triggerExport: Sheet открылся после strategy2 (AXPress на ребёнке)")
+						return
+					end if
+				end try
+			end repeat
+		end try
+	end if
+
+	-- Стратегия 3: cliclick — настоящий мышиный клик (если установлен).
+	if btnCoords is not missing value then
+		set cx to item 1 of btnCoords
+		set cy to item 2 of btnCoords
+		set cliclickPath to my findCliclick()
+		if cliclickPath is not "" then
+			try
+				tell application kAppName to activate
+				delay 0.2
+				do shell script (quoted form of cliclickPath) & " c:" & cx & "," & cy
+				my logLine("strategy3: cliclick c:" & cx & "," & cy)
+				if my pollExportSheet(2) then
+					my logLine("triggerExport: Sheet открылся после strategy3 (cliclick)")
+					return
+				end if
+			on error eMsg
+				my logLine("strategy3: cliclick fail: " & eMsg)
+			end try
+		else
+			my logLine("strategy3: cliclick не установлен (рекомендация: brew install cliclick)")
+		end if
+	end if
+
+	-- Стратегия 4: System Events «click at» в координатах центра кнопки.
+	if btnCoords is not missing value then
+		set cx to item 1 of btnCoords
+		set cy to item 2 of btnCoords
+		try
+			tell application kAppName to activate
+			delay 0.2
+			tell application "System Events" to click at {cx, cy}
+			my logLine("strategy4: click at {" & cx & "," & cy & "}")
+			if my pollExportSheet(2) then
+				my logLine("triggerExport: Sheet открылся после strategy4 (click at)")
+				return
+			end if
+		on error eMsg
+			my logLine("strategy4: click at fail: " & eMsg)
+		end try
+	end if
+
+	-- Стратегия 5: координатный клик по static text "Экспорт".
+	set txtEl to my findStaticTextLabeled("Экспорт")
+	if txtEl is not missing value then
+		set txtCoords to my centerOf(txtEl)
+		if txtCoords is not missing value then
+			set cx to item 1 of txtCoords
+			set cy to item 2 of txtCoords
+			set cliclickPath to my findCliclick()
+			tell application kAppName to activate
+			delay 0.2
+			if cliclickPath is not "" then
+				try
+					do shell script (quoted form of cliclickPath) & " c:" & cx & "," & cy
+					my logLine("strategy5: cliclick по static text Экспорт " & cx & "," & cy)
+				end try
+			else
+				try
+					tell application "System Events" to click at {cx, cy}
+					my logLine("strategy5: click at static text Экспорт " & cx & "," & cy)
+				end try
+			end if
+			if my pollExportSheet(2) then
+				my logLine("triggerExport: Sheet открылся после strategy5 (static text)")
+				return
+			end if
+		end if
+	end if
+
+	-- Стратегия 6: пункт меню Файл → Экспорт (если активен).
 	tell application "System Events"
 		tell process kAppName
 			repeat with menuName in {"Файл", "File"}
@@ -678,7 +777,7 @@ on triggerExport()
 						set mi to menu item (itemName as text) of menu (menuName as text) of menu bar 1
 						if (enabled of mi) is true then
 							click mi
-							my logLine("triggerExport: меню '" & (itemName as text) & "' OK")
+							my logLine("strategy6: меню '" & (itemName as text) & "' OK")
 							return
 						end if
 					end try
@@ -687,12 +786,66 @@ on triggerExport()
 		end tell
 	end tell
 
-	-- Стратегия 4: keystroke ⌘E (shortcut пункта Экспорт).
-	my logLine("triggerExport: ничего не сработало, шлю ⌘E")
+	-- Стратегия 7: keystroke ⌘E.
+	my logLine("strategy7: keystroke ⌘E")
 	tell application "System Events" to tell process kAppName
 		keystroke "e" using {command down}
 	end tell
 end triggerExport
+
+on findExportButton()
+	tell application "System Events"
+		tell process kAppName
+			try
+				if (count of windows) is 0 then return missing value
+				return my findByAxId(window 1, "exportButton", 0, 6)
+			end try
+		end tell
+	end tell
+	return missing value
+end findExportButton
+
+on findStaticTextLabeled(labelText)
+	tell application "System Events"
+		tell process kAppName
+			try
+				if (count of windows) is 0 then return missing value
+				return my findStaticByText(window 1, labelText, 0, 6)
+			end try
+		end tell
+	end tell
+	return missing value
+end findStaticTextLabeled
+
+on centerOf(uiEl)
+	if uiEl is missing value then return missing value
+	tell application "System Events"
+		try
+			set posVal to position of uiEl
+			set sizeVal to size of uiEl
+			set cx to ((item 1 of posVal) as integer) + ((item 1 of sizeVal) as integer) div 2
+			set cy to ((item 2 of posVal) as integer) + ((item 2 of sizeVal) as integer) div 2
+			return {cx, cy}
+		end try
+	end tell
+	return missing value
+end centerOf
+
+on coordsText(c)
+	if c is missing value then return "(?)"
+	return ((item 1 of c) as text) & "," & ((item 2 of c) as text)
+end coordsText
+
+on findCliclick()
+	-- Проверяем стандартные пути homebrew (Apple Silicon и Intel).
+	repeat with p in {"/opt/homebrew/bin/cliclick", "/usr/local/bin/cliclick"}
+		try
+			do shell script "test -x " & quoted form of (p as text)
+			return (p as text)
+		end try
+	end repeat
+	return ""
+end findCliclick
 
 on clickStaticTextLabeled(labelText)
 	-- Находит первый AXStaticText с заданным name/value в окне клипа
