@@ -506,10 +506,10 @@ on renderOne(srcPosix, outFolderPosix, baseName)
 	my closeFrontDocument()
 end renderOne
 
-on pollExportSheet(seconds)
-	-- Возвращает true, если в течение seconds секунд появился контейнер экспорта.
+on pollExportSheet(maxSec)
+	-- Возвращает true, если в течение maxSec секунд появился контейнер экспорта.
 	set elapsed to 0
-	repeat while elapsed < seconds
+	repeat while elapsed < maxSec
 		if (my exportContainer()) is not missing value then return true
 		delay 0.25
 		set elapsed to elapsed + 0.25
