@@ -529,15 +529,52 @@ on renderOne(srcPosix, outFolderPosix, baseName)
 end renderOne
 
 on clickSaveButton()
-	-- Ищем default-кнопку сохранения в save-sheet и кликаем каскадом.
+	-- Ищем default-кнопку сохранения. Стратегии поиска по нарастающей:
+	-- 1) по AXIdentifier (saveButton / nextButton / startExport / export…),
+	-- 2) по имени из известных вариантов,
+	-- 3) первая кнопка-default в sheet,
+	-- 4) первая enabled-кнопка в окне save-dialog.
 	set targetBtn to missing value
-	-- Сначала по имени.
-	repeat with nm in {"Сохранить", "Save", "Экспорт", "Export"}
-		set targetBtn to my findButtonByNameInSheet(nm as text)
-		if targetBtn is not missing value then exit repeat
+
+	-- 1. По известным AXIdentifier.
+	repeat with axId in {"saveButton", "saveExport", "exportSave", "startExport", "exportStart", "nextButton", "exportNext"}
+		set targetBtn to my findButtonByAxIdInSheet(axId as text)
+		if targetBtn is not missing value then
+			my logLine("clickSaveButton: найден по axId='" & (axId as text) & "'")
+			exit repeat
+		end if
 	end repeat
+
+	-- 2. По имени.
 	if targetBtn is missing value then
-		my logLine("clickSaveButton: кнопка сохранения не найдена")
+		repeat with nm in {"Сохранить", "Save", "Экспорт", "Export", "Готово", "Done", "Начать экспорт", "Start Export"}
+			set targetBtn to my findButtonByNameInSheet(nm as text)
+			if targetBtn is not missing value then
+				my logLine("clickSaveButton: найден по имени='" & (nm as text) & "'")
+				exit repeat
+			end if
+		end repeat
+	end if
+
+	-- 3. Default-кнопка sheet (с атрибутом AXSubrole = AXDefaultButton).
+	if targetBtn is missing value then
+		set targetBtn to my findDefaultButtonInSheet()
+		if targetBtn is not missing value then
+			my logLine("clickSaveButton: найден как default-кнопка")
+		end if
+	end if
+
+	-- 4. Если save-dialog — отдельное окно (не sheet), ищем там.
+	if targetBtn is missing value then
+		set targetBtn to my findSaveButtonInAnyWindow()
+		if targetBtn is not missing value then
+			my logLine("clickSaveButton: найден в отдельном окне")
+		end if
+	end if
+
+	if targetBtn is missing value then
+		my logLine("clickSaveButton: кнопка не найдена. Делаю дамп UI…")
+		my dumpUIState("/tmp/gopro_save_state.txt", "(save state)", "save button not found")
 		return false
 	end if
 
@@ -601,6 +638,21 @@ on saveSheetStillVisible()
 			try
 				if (count of windows) is 0 then return false
 				if (exists sheet 1 of window 1) then return true
+				-- Save-dialog как отдельное окно.
+				try
+					set wins to every window
+					repeat with wRef in wins
+						set wEl to (contents of wRef)
+						try
+							set wRole to role of wEl
+							if (wRole as text) is "AXDialog" then return true
+						end try
+						try
+							-- Если у окна есть text field 1 — скорее всего save panel.
+							if (exists text field 1 of wEl) then return true
+						end try
+					end repeat
+				end try
 			end try
 		end tell
 	end tell
@@ -732,6 +784,62 @@ on findButtonByNameInSheet(btnName)
 	end tell
 	return missing value
 end findButtonByNameInSheet
+
+on findDefaultButtonInSheet()
+	-- Ищет кнопку с AXSubrole = "AXDefaultButton" в sheet 1 окна 1.
+	-- Это та самая «синяя» кнопка по умолчанию, на которой Enter.
+	tell application "System Events"
+		tell process kAppName
+			try
+				if (count of windows) is 0 then return missing value
+				set w1 to window 1
+				if not (exists sheet 1 of w1) then return missing value
+				set btns to every button of sheet 1 of w1
+				repeat with bRef in btns
+					set bEl to (contents of bRef)
+					try
+						set sr to value of attribute "AXSubrole" of bEl
+						if sr is "AXDefaultButton" then return bEl
+					end try
+				end repeat
+			end try
+		end tell
+	end tell
+	return missing value
+end findDefaultButtonInSheet
+
+on findSaveButtonInAnyWindow()
+	-- Если save-dialog открылся как отдельное окно (не sheet), ищем кнопку
+	-- по знакомым AXId / именам / AXSubrole во всех окнах процесса.
+	tell application "System Events"
+		tell process kAppName
+			try
+				set wins to every window
+				repeat with wRef in wins
+					set wEl to (contents of wRef)
+					-- AXSubrole AXDefaultButton.
+					try
+						set btns to every button of wEl
+						repeat with bRef in btns
+							set bEl to (contents of bRef)
+							try
+								set sr to value of attribute "AXSubrole" of bEl
+								if sr is "AXDefaultButton" then return bEl
+							end try
+						end repeat
+					end try
+					-- Имена.
+					repeat with nm in {"Сохранить", "Save", "Экспорт", "Export", "Готово", "Done", "Начать экспорт", "Start Export"}
+						try
+							return button (nm as text) of wEl
+						end try
+					end repeat
+				end repeat
+			end try
+		end tell
+	end tell
+	return missing value
+end findSaveButtonInAnyWindow
 
 on exportSheetSignature()
 	-- Возвращает текстовую "сигнатуру" текущего sheet'а.
@@ -1337,22 +1445,24 @@ on waitForSaveSheet()
 end waitForSaveSheet
 
 on saveSheet()
+	-- Возвращает контейнер save-dialog'а: либо sheet 1 of window 1,
+	-- либо отдельное окно с text field (save panel как separate dialog).
 	tell application "System Events"
 		tell process kAppName
 			try
+				if (count of windows) is 0 then return missing value
+				-- Вариант A: sheet поверх окна клипа.
 				if (exists sheet 1 of window 1) then
-					-- В save-sheet есть кнопка Сохранить/Save или поле "Имя".
-					set s to sheet 1 of window 1
-					set hasSave to false
-					try
-						repeat with bn in {"Сохранить", "Save", "Экспорт", "Export"}
-							try
-								if exists (button (bn as text) of s) then set hasSave to true
-							end try
-						end repeat
-					end try
-					if hasSave then return s
+					return sheet 1 of window 1
 				end if
+				-- Вариант B: отдельное окно — берём first frontmost окно с text field.
+				set wins to every window
+				repeat with wRef in wins
+					set wEl to (contents of wRef)
+					try
+						if (exists text field 1 of wEl) then return wEl
+					end try
+				end repeat
 			end try
 		end tell
 	end tell
