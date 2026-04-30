@@ -55,6 +55,7 @@ tail -f /tmp/gopro_360_to_mp4.log
 | [`scripts/gopro_convert_360_to_mp4.applescript`](scripts/gopro_convert_360_to_mp4.applescript) | Рекурсивная конвертация всех `.360` файлов в `.mp4` с настраиваемыми параметрами (универсальный, поэлементно ждёт окончания каждого экспорта) |
 | [`scripts/gopro_queue_360_to_mp4.applescript`](scripts/gopro_queue_360_to_mp4.applescript) | Ставит все `.360` в очередь экспорта GoPro Player одним проходом (использует кнопку «Отправить в очередь») |
 | [`scripts/gopro_render_then_delete_360.applescript`](scripts/gopro_render_then_delete_360.applescript) | **Один файл за раз**: рендерит `.360`, ждёт окончания, проверяет результат, **удаляет исходник** (Корзина / `rm` / не трогать) и переходит к следующему |
+| [`scripts/gopro_dump_menu.applescript`](scripts/gopro_dump_menu.applescript) | Диагностика: дампит реальную UI-структуру GoPro Player в `/tmp/gopro_menu_dump.txt`. Используется, если рендер не запускается — показывает реальные имена пунктов меню в текущей версии плеера |
 | [`scripts/gopro_quit.applescript`](scripts/gopro_quit.applescript) | Корректно завершить приложение |
 | [`scripts/gopro_controller.applescript`](scripts/gopro_controller.applescript) | Универсальный контроллер с handlers (можно `load script`) |
 
@@ -415,6 +416,45 @@ tail -f /tmp/gopro_360_to_mp4.log
 - На время рендера лучше не трогать мышь и клавиатуру: GUI-скриптинг чувствителен к фокусу.
 - Если экспорт длинного клипа занимает больше получаса, увеличьте `kExportFinishTimeout` (по умолчанию `1800` секунд).
 - Для очень тяжёлых .360 файлов имеет смысл выставить `kBetweenFilesDelay` побольше (2–3 секунды), чтобы дать ОС «отдышаться».
+
+## Если рендеринг не запускается — диагностика
+
+Симптомы:
+
+- GoPro Player запускается и открывает `.360` — видно глазами;
+- но диалог «Настройки экспорта» не появляется;
+- через ~60 сек скрипт показывает ошибку `-2700 «Не дождался диалога 'Настройки экспорта'»`.
+
+Причина почти всегда — фактическое имя пункта меню в вашей версии GoPro Player отличается от того, что ищет скрипт (например, `Экспортировать…` вместо `Экспорт…`), или у пункта другой shortcut, или меню не активно из-за проблем индексации `.360` на конкретном томе.
+
+Чтобы это исправить, нужен **дамп реальной UI-структуры** GoPro Player. Используйте `scripts/gopro_dump_menu.applescript`:
+
+```bash
+cd ~/gopro-applescript
+git pull origin cursor/applescript-gopro-player-d935
+osacompile -o "GoPro Menu Dump.app" scripts/gopro_dump_menu.applescript
+xattr -dr com.apple.quarantine "GoPro Menu Dump.app"
+```
+
+Затем:
+
+1. Откройте в GoPro Player один `.360` файл и **дождитесь полной загрузки** (видна полоса проигрывания, можно нажать ▶).
+2. Запустите `GoPro Menu Dump.app` (двойной клик).
+3. Дайте ему права в `Системные настройки → Конфиденциальность и безопасность → Универсальный доступ` (так же, как давали `GoPro 360 Render`).
+4. Должен появиться диалог «Дамп записан в /tmp/gopro_menu_dump.txt».
+5. Откройте файл и пришлите его содержимое следующему агенту:
+
+   ```bash
+   cat /tmp/gopro_menu_dump.txt
+   ```
+
+В дампе будут видны:
+
+- все локализованные имена пунктов меню (`Файл`, `Правка`, `Вид`, …) с их `name`, `enabled`, `AXIdentifier` и shortcut'ом;
+- все окна приложения с их role и size;
+- AX-дерево окна клипа.
+
+По этому дампу можно точно настроить триггер экспорта в `gopro_render_then_delete_360.applescript` под вашу версию GoPro Player.
 
 ## Настройка прав доступа
 
