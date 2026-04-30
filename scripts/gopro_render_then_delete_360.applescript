@@ -422,17 +422,21 @@ end listMp4s
 on waitForNewMp4(folderPosix, beforeList)
 	-- Ждём, пока в папке появится новый .mp4 которого не было в beforeList.
 	-- Возвращает абсолютный POSIX-путь к нему.
+	-- Таймаут — kRenderTimeout (по умолчанию 1 час), потому что:
+	-- 1) save-sheet может несколько секунд "сохранять" перед стартом рендера;
+	-- 2) сам рендер на сетевом томе может занять минуты (для 8-мин 4K — до 3-5 мин).
 	set elapsed to 0
-	repeat while elapsed < kSaveSheetTimeout + 60
+	repeat while elapsed < kRenderTimeout
 		set currentList to my listMp4s(folderPosix)
 		repeat with curRef in currentList
 			set curName to curRef as text
 			if not (my listContains(beforeList, curName)) then
+				my logLine("waitForNewMp4: появился " & curName & " (через " & elapsed & " сек)")
 				return folderPosix & "/" & curName
 			end if
 		end repeat
-		delay 1.0
-		set elapsed to elapsed + 1.0
+		delay 2.0
+		set elapsed to elapsed + 2.0
 	end repeat
 	error "В папке не появился новый .mp4 файл: " & folderPosix
 end waitForNewMp4
@@ -505,18 +509,103 @@ on renderOne(srcPosix, outFolderPosix, baseName)
 	my logLine("Нажата 'Далее...' (exportNext)")
 
 	my waitForSaveSheet()
-	my setSaveFileName(baseName & ".mp4")
+	-- Сначала навигируем в нужную папку (через Cmd+Shift+G), потом задаём имя.
+	-- Порядок важен: после Go to Folder фокус переходит в поле имени.
 	my navigateSaveSheetToFolder(outFolderPosix)
-	-- Кликаем "Сохранить" — это уже стандартный NSSavePanel, обычный click работает.
-	if not (my clickButtonByNames(my saveSheet(), {"Сохранить", "Save", "Экспорт", "Export"})) then
-		-- На всякий случай Enter — в save panel это default-кнопка.
-		tell application "System Events" to keystroke return
-		my logLine("Сохранить: использован keystroke return")
+	my setSaveFileName(baseName & ".mp4")
+	delay 0.5
+
+	-- Кликаем "Сохранить" / "Экспорт" — стратегии каскадом, как для export-sheet.
+	if not (my clickSaveButton()) then
+		-- Финальный фолбэк — Enter (default-кнопка).
+		try
+			tell application "System Events" to keystroke return
+			my logLine("Сохранить: использован keystroke return (фолбэк)")
+		end try
 	end if
 
 	delay 1.0
 	my closeFrontDocument()
 end renderOne
+
+on clickSaveButton()
+	-- Ищем default-кнопку сохранения в save-sheet и кликаем каскадом.
+	set targetBtn to missing value
+	-- Сначала по имени.
+	repeat with nm in {"Сохранить", "Save", "Экспорт", "Export"}
+		set targetBtn to my findButtonByNameInSheet(nm as text)
+		if targetBtn is not missing value then exit repeat
+	end repeat
+	if targetBtn is missing value then
+		my logLine("clickSaveButton: кнопка сохранения не найдена")
+		return false
+	end if
+
+	-- Стратегия A: AXPress.
+	try
+		with timeout of 5 seconds
+			tell application "System Events" to perform action "AXPress" of targetBtn
+		end timeout
+		my logLine("clickSaveButton: AXPress отправлен")
+		delay 0.5
+		if not (my saveSheetStillVisible()) then return true
+	on error eMsg
+		my logLine("clickSaveButton: AXPress fail: " & eMsg)
+	end try
+
+	-- Стратегия B: cliclick по координатам.
+	set coords to my centerOf(targetBtn)
+	if coords is not missing value then
+		set cx to item 1 of coords
+		set cy to item 2 of coords
+		set cliclickPath to my findCliclick()
+		if cliclickPath is not "" then
+			try
+				tell application kAppName to activate
+				delay 0.2
+				do shell script (quoted form of cliclickPath) & " c:" & cx & "," & cy
+				my logLine("clickSaveButton: cliclick " & cx & "," & cy)
+				delay 0.5
+				if not (my saveSheetStillVisible()) then return true
+			end try
+		end if
+
+		-- Стратегия C: System Events click at.
+		try
+			tell application kAppName to activate
+			delay 0.2
+			tell application "System Events" to click at {cx, cy}
+			my logLine("clickSaveButton: click at " & cx & "," & cy)
+			delay 0.5
+			if not (my saveSheetStillVisible()) then return true
+		end try
+	end if
+
+	-- Стратегия D: keystroke return (default).
+	try
+		tell application kAppName to activate
+		delay 0.2
+		tell application "System Events" to keystroke return
+		my logLine("clickSaveButton: keystroke return")
+		delay 0.5
+		if not (my saveSheetStillVisible()) then return true
+	end try
+
+	my logLine("clickSaveButton: все стратегии не закрыли save-sheet")
+	return false
+end clickSaveButton
+
+on saveSheetStillVisible()
+	tell application "System Events"
+		tell process kAppName
+			try
+				if (count of windows) is 0 then return false
+				if (exists sheet 1 of window 1) then return true
+			end try
+		end tell
+	end tell
+	return false
+end saveSheetStillVisible
 
 on clickButtonInExportSheet(axId, fallbackNames)
 	-- Каскад стратегий клика по кнопке внутри export sheet:
