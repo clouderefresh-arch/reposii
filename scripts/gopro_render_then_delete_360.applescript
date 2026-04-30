@@ -89,14 +89,32 @@ property kBetweenFilesDelay : 1.0
 
 -- Запуск из osascript / Script Editor / двойным кликом.
 on run argv
-	set sources to my resolveSourceList(argv)
-	my mainLoop(sources)
+	try
+		my logLine("RUN: argv count = " & (count of argv))
+		set sources to my resolveSourceList(argv)
+		my logLine("RUN: найдено .360 файлов: " & (count of sources))
+		my mainLoop(sources)
+	on error errMsg number errNum
+		my logLine("FATAL: " & errNum & " — " & errMsg)
+		try
+			display dialog "Ошибка скрипта (" & errNum & "):" & return & return & errMsg buttons {"OK"} default button 1 with icon stop with title "GoPro 360 → MP4"
+		end try
+	end try
 end run
 
 -- Запуск как droplet: перетащить папку или .360 файлы на сохранённый .app.
 on open droppedItems
-	set sources to my expandDropped(droppedItems)
-	my mainLoop(sources)
+	try
+		my logLine("OPEN: дропнуто элементов: " & (count of droppedItems))
+		set sources to my expandDropped(droppedItems)
+		my logLine("OPEN: найдено .360 файлов: " & (count of sources))
+		my mainLoop(sources)
+	on error errMsg number errNum
+		my logLine("FATAL: " & errNum & " — " & errMsg)
+		try
+			display dialog "Ошибка скрипта (" & errNum & "):" & return & return & errMsg buttons {"OK"} default button 1 with icon stop with title "GoPro 360 → MP4"
+		end try
+	end try
 end open
 
 ------------------------------------------------------------------------------
