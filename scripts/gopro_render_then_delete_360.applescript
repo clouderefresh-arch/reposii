@@ -323,19 +323,16 @@ on mainLoop(sources)
 		try
 			my logLine("[" & processed & "/" & total & "] Старт: " & src & "  →  " & outFolder)
 
-			-- Запоминаем "снимок" .mp4-файлов в outFolder ДО рендера —
-			-- чтобы потом найти именно вновь появившийся файл (GoPro Player
-			-- умеет добавлять timestamp-суффикс к имени, например
-			-- GS010712_2026-04-30_08-59-40-032.mp4).
-			set beforeMp4s to my listMp4s(outFolder)
-
+			-- renderOne сам найдёт новый .mp4 в watch-папках, переместит
+			-- его рядом с исходником и положит путь в lastProducedMp4.
+			set lastProducedMp4 to ""
 			my renderOne(src, outFolder, baseName)
 
-			set producedMp4 to my waitForNewMp4(outFolder, beforeMp4s)
-			my waitForOutputStable(producedMp4)
+			if lastProducedMp4 is "" then error "renderOne не вернул путь к результату"
+			set producedMp4 to lastProducedMp4
 
 			if not my fileExists(producedMp4) then
-				error "Выходной файл не создан"
+				error "Выходной файл не создан: " & producedMp4
 			end if
 			if (my fileSize(producedMp4)) < 1024 then
 				error "Выходной файл слишком маленький, рендер сорван: " & producedMp4
@@ -511,39 +508,113 @@ on renderOne(srcPosix, outFolderPosix, baseName)
 	-- Снимок UI сразу после "Далее..." — чтобы видеть, что появилось.
 	delay 1.0
 	my dumpUIState("/tmp/gopro_after_next.txt", srcPosix, "(state right after Далее...)")
-	my logLine("UI после 'Далее...' записан в /tmp/gopro_after_next.txt")
 
+	-- Ждём save-sheet и СРАЗУ жмём 'Сохранить' (OKButton) — без навигации.
+	-- В этой версии GoPro Player Cmd+Shift+G в save-sheet не работает,
+	-- попытка перенавигироваться закрывает sheet с тарабарским именем.
+	-- Поэтому отдаём контроль GoPro Player и потом перемещаем результат.
 	my waitForSaveSheet()
 	my logLine("waitForSaveSheet: save-sheet появился")
 
-	-- Сначала навигируем в нужную папку (через Cmd+Shift+G), потом задаём имя.
-	-- Порядок важен: после Go to Folder фокус переходит в поле имени.
-	my navigateSaveSheetToFolder(outFolderPosix)
+	-- Запоминаем существующие .mp4 в кандидатных папках ДО клика Сохранить.
+	set candidateFolders to my mp4WatchFolders(outFolderPosix)
+	set beforeSnapshot to my snapshotMp4s(candidateFolders)
 
-	-- Убеждаемся, что sheet ещё на экране (Enter после Cmd+Shift+G мог
-	-- случайно его подтвердить если в pbcopy пустая строка попала).
-	if not (my saveSheetStillVisible()) then
-		my logLine("ВНИМАНИЕ: save-sheet закрылся после navigateSaveSheetToFolder — рендер уже стартовал в дефолтной папке")
-		delay 1.0
-		my closeFrontDocument()
-		return
-	end if
-
-	my setSaveFileName(baseName & ".mp4")
-	delay 0.5
-
-	-- Кликаем "Сохранить" / "Экспорт" — стратегии каскадом, как для export-sheet.
 	if not (my clickSaveButton()) then
-		-- Финальный фолбэк — Enter (default-кнопка).
 		try
 			tell application "System Events" to keystroke return
 			my logLine("Сохранить: использован keystroke return (фолбэк)")
 		end try
 	end if
 
+	-- Ждём появления нового .mp4 в любой из watch-папок.
+	set newMp4 to my waitForNewMp4InAnyFolder(candidateFolders, beforeSnapshot)
+	if newMp4 is missing value then
+		error "Новый .mp4 не появился ни в одной из watch-папок"
+	end if
+	my logLine("Найден свежий .mp4: " & newMp4)
+
+	-- Ждём, пока файл перестанет расти (рендер закончился).
+	my waitForOutputStable(newMp4)
+
+	-- Перемещаем рядом с исходником и переименовываем в <baseName>.mp4.
+	set targetMp4 to outFolderPosix & "/" & baseName & ".mp4"
+	if newMp4 is not targetMp4 then
+		my logLine("Перемещаю: " & newMp4 & "  →  " & targetMp4)
+		try
+			do shell script "/bin/mv -f " & (my shellQuote(newMp4)) & " " & (my shellQuote(targetMp4))
+		on error eMov
+			my logLine("mv fail: " & eMov)
+		end try
+	end if
+
+	-- Сообщаем главному циклу, какой файл считать результатом.
+	set lastProducedMp4 to targetMp4
+
 	delay 1.0
 	my closeFrontDocument()
 end renderOne
+
+-- Глобальная переменная для возврата пути из renderOne в mainLoop.
+property lastProducedMp4 : ""
+
+on mp4WatchFolders(sourceFolder)
+	-- Папки, в которые GoPro Player может сохранить .mp4. Перебираются
+	-- все после рендера, ищем новый файл.
+	set out to {}
+	-- 1. Сама папка с исходником — на случай, если GoPro Player honor её.
+	if sourceFolder is not "" then set end of out to sourceFolder
+	-- 2. Стандартные macOS-папки.
+	set home_ to (do shell script "echo $HOME")
+	set end of out to home_ & "/Movies"
+	set end of out to home_ & "/Movies/GoPro Player"
+	set end of out to home_ & "/Movies/GoPro"
+	set end of out to home_ & "/Documents"
+	set end of out to home_ & "/Desktop"
+	set end of out to home_ & "/Downloads"
+	return out
+end mp4WatchFolders
+
+on snapshotMp4s(folderList)
+	-- Словарь {folder: {file1, file2, …}} в виде списка пар.
+	set out to {}
+	repeat with i from 1 to (count of folderList)
+		set f to (item i of folderList) as text
+		set end of out to {f, my listMp4s(f)}
+	end repeat
+	return out
+end snapshotMp4s
+
+on waitForNewMp4InAnyFolder(folderList, beforeSnapshot)
+	-- Опрашивает все папки кандидаты и возвращает первый появившийся
+	-- новый .mp4 (полный POSIX-путь). Таймаут — kRenderTimeout (1 час).
+	set elapsed to 0
+	repeat while elapsed < kRenderTimeout
+		repeat with i from 1 to (count of folderList)
+			set f to (item i of folderList) as text
+			set beforeForFolder to {}
+			-- Найти snapshot для этой папки.
+			repeat with j from 1 to (count of beforeSnapshot)
+				set pair to item j of beforeSnapshot
+				if (item 1 of pair) is f then
+					set beforeForFolder to (item 2 of pair)
+					exit repeat
+				end if
+			end repeat
+			set currentList to my listMp4s(f)
+			repeat with curRef in currentList
+				set curName to curRef as text
+				if not (my listContains(beforeForFolder, curName)) then
+					my logLine("waitForNewMp4InAnyFolder: появился '" & curName & "' в " & f & " (через " & elapsed & " сек)")
+					return f & "/" & curName
+				end if
+			end repeat
+		end repeat
+		delay 2.0
+		set elapsed to elapsed + 2.0
+	end repeat
+	return missing value
+end waitForNewMp4InAnyFolder
 
 on clickSaveButton()
 	-- Ищем default-кнопку сохранения. Стратегии поиска по нарастающей:
