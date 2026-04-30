@@ -348,6 +348,8 @@ on mainLoop(sources)
 		on error errMsg number errNum
 			set end of failed to src & "  →  " & errMsg & " (" & errNum & ")"
 			my logLine("ОШИБКА: " & src & " — " & errMsg)
+			-- Сохраняем снимок текущего UI, чтобы было видно, что было на экране.
+			my dumpUIState("/tmp/gopro_render_state.txt", src, errMsg)
 			my dismissAnySheet()
 			delay 0.5
 			my closeFrontDocument()
@@ -1419,3 +1421,96 @@ on logLine(s)
 		do shell script "echo " & quoted form of (((current date) as text) & " - " & (s as text)) & " >> /tmp/gopro_360_to_mp4.log"
 	end try
 end logLine
+
+on dumpUIState(outPath, srcPath, errMsg)
+	-- При ошибке сохраняет снимок текущего UI GoPro Player в файл,
+	-- чтобы можно было понять, какое окно/кнопки были на экране.
+	try
+		do shell script "echo '=== UI STATE DUMP ===' > " & quoted form of outPath
+		do shell script "printf 'time: %s\\nsrc: %s\\nerror: %s\\n' " & quoted form of ((current date) as text) & " " & quoted form of srcPath & " " & quoted form of errMsg & " >> " & quoted form of outPath
+	end try
+	tell application "System Events"
+		tell process kAppName
+			try
+				set wins to every window
+				my appendDump(outPath, "windows: " & (count of wins))
+				repeat with wRef in wins
+					set wEl to (contents of wRef)
+					my appendDump(outPath, "")
+					my appendDump(outPath, "[WINDOW] name=" & my safeNameOf(wEl) & " role=" & my safeRoleOf(wEl))
+					my appendDump(outPath, "  buttons:")
+					try
+						set btns to every button of wEl
+						repeat with bRef in btns
+							set bEl to (contents of bRef)
+							my appendDump(outPath, "    - name='" & my safeNameOf(bEl) & "' enabled=" & my safeEnabledOf(bEl) & " axId='" & my safeAxIdOf(bEl) & "'")
+						end repeat
+					end try
+					try
+						if (exists sheet 1 of wEl) then
+							my appendDump(outPath, "  [SHEET 1] role=" & my safeRoleOf(sheet 1 of wEl))
+							try
+								set sBtns to every button of sheet 1 of wEl
+								repeat with sbRef in sBtns
+									set sbEl to (contents of sbRef)
+									my appendDump(outPath, "    - btn name='" & my safeNameOf(sbEl) & "' enabled=" & my safeEnabledOf(sbEl) & " axId='" & my safeAxIdOf(sbEl) & "'")
+								end repeat
+							end try
+						end if
+					end try
+				end repeat
+			on error eDump
+				my appendDump(outPath, "ERR: " & eDump)
+			end try
+		end tell
+	end tell
+	my logLine("UI snapshot записан в " & outPath)
+end dumpUIState
+
+on appendDump(outPath, s)
+	try
+		do shell script "printf '%s\\n' " & quoted form of (s as text) & " >> " & quoted form of outPath
+	end try
+end appendDump
+
+on safeNameOf(el)
+	tell application "System Events"
+		try
+			set v to name of el
+			if v is missing value then return ""
+			return (v as text)
+		end try
+	end tell
+	return ""
+end safeNameOf
+
+on safeRoleOf(el)
+	tell application "System Events"
+		try
+			set v to role of el
+			if v is missing value then return ""
+			return (v as text)
+		end try
+	end tell
+	return ""
+end safeRoleOf
+
+on safeEnabledOf(el)
+	tell application "System Events"
+		try
+			return (enabled of el as text)
+		end try
+	end tell
+	return "?"
+end safeEnabledOf
+
+on safeAxIdOf(el)
+	tell application "System Events"
+		try
+			set v to value of attribute "AXIdentifier" of el
+			if v is missing value then return ""
+			return (v as text)
+		end try
+	end tell
+	return ""
+end safeAxIdOf
