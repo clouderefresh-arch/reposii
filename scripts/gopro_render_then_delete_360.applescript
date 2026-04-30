@@ -1736,27 +1736,32 @@ end saveSheet
 on sheetLooksLikeSave(sh)
 	-- True если в sheet есть кнопка OKButton (NSSavePanel) или одно из
 	-- знакомых имён сохранения, либо есть text field (поле имени файла).
+	set saveAxIds to {"OKButton", "saveButton"}
+	set saveNames to {"Сохранить", "Save", "Готово", "Done"}
 	tell application "System Events"
-		try
-			set btns to every button of sh
-			repeat with bRef in btns
-				set bEl to (contents of bRef)
-				try
-					set bAx to value of attribute "AXIdentifier" of bEl
-					if bAx is "OKButton" or bAx is "saveButton" then return true
-				end try
-				try
-					set bN to name of bEl
-					if bN is not missing value then
-						set bNT to bN as text
-						if bNT is "Сохранить" or bNT is "Save" or bNT is "Готово" or bNT is "Done" then return true
-					end if
-				end try
-			end repeat
-		end try
-		try
-			if (exists text field 1 of sh) then return true
-		end try
+		tell process kAppName
+			try
+				set btns to every button of sh
+				repeat with bRef in btns
+					set bEl to (contents of bRef)
+					try
+						set bAx to value of attribute "AXIdentifier" of bEl
+						if bAx is not missing value then
+							if saveAxIds contains (bAx as text) then return true
+						end if
+					end try
+					try
+						set bN to name of bEl
+						if bN is not missing value then
+							if saveNames contains (bN as text) then return true
+						end if
+					end try
+				end repeat
+			end try
+			try
+				if (exists text field 1 of sh) then return true
+			end try
+		end tell
 	end tell
 	return false
 end sheetLooksLikeSave
@@ -2253,8 +2258,12 @@ on setSliderByLabel(container, labels, normalizedValue)
 			end try
 			set sp to position of targetSlider
 			set ss to size of targetSlider
-			set sx to ((item 1 of sp) as integer) + ((item 1 of ss) as integer) * normalizedValue
-			set sy to ((item 2 of sp) as integer) + ((item 2 of ss) as integer) / 2
+			set spx to (item 1 of sp) as integer
+			set spy to (item 2 of sp) as integer
+			set ssw to (item 1 of ss) as integer
+			set ssh to (item 2 of ss) as integer
+			set sx to spx + (ssw * normalizedValue)
+			set sy to spy + (ssh / 2)
 			click at {sx as integer, sy as integer}
 			delay 0.15
 		end try
