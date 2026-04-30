@@ -1,17 +1,15 @@
 -- gopro_dump_menu.applescript
 --
 -- Диагностический дампер. Активирует GoPro Player и сохраняет в файл
--- /tmp/gopro_menu_dump.txt полное описание:
---   1. Все меню в строке меню с их локализованными именами.
---   2. Все пункты каждого меню (имя, активность, AXIdentifier, shortcut).
---   3. Все окна процесса (имя, role, размер).
---   4. AX-дерево фронтального окна (с ограничением глубины и размера).
+-- /tmp/gopro_menu_dump.txt полное описание UI (меню + окна + AX-дерево
+-- фронтального окна). По этому дампу можно настроить триггер экспорта
+-- в gopro_render_then_delete_360.applescript под конкретную версию
+-- и локализацию GoPro Player.
 --
 -- Что должен сделать пользователь:
 --   1) Открыть в GoPro Player один .360 файл и ДОЖДАТЬСЯ полной загрузки
---      (полоса прокрутки появится, видео можно проиграть).
---   2) Запустить этот скрипт (двойной клик по .app, собранному из него,
---      или Script Editor → ▶, или osascript).
+--      (полоса прокрутки появилась, кнопка ▶ активна).
+--   2) Запустить этот скрипт (osascript / Script Editor / .app).
 --   3) Прислать содержимое /tmp/gopro_menu_dump.txt.
 
 property kAppName : "GoPro Player"
@@ -21,168 +19,154 @@ property kMaxBytes : 200000
 
 on run
 	try
-		my reset()
-		my writeLine("=== GoPro Player UI dump ===")
-		my writeLine("Время: " & ((current date) as text))
-		my writeLine("Скрипт: " & (POSIX path of (path to me)))
-		my writeLine("")
+		my resetLog()
+		my logLn("=== GoPro Player UI dump ===")
+		my logLn("Время: " & ((current date) as text))
+		my logLn("")
 
 		tell application kAppName to activate
 		delay 0.5
 
 		my dumpMenuBar()
-		my writeLine("")
+		my logLn("")
 		my dumpWindows()
-		my writeLine("")
+		my logLn("")
 		my dumpFrontWindowTree()
-		my writeLine("")
-		my writeLine("=== END ===")
+		my logLn("")
+		my logLn("=== END ===")
 
-		display dialog "Дамп записан в " & kOutPath & return & return & "Пришлите содержимое этого файла следующему агенту." buttons {"OK"} default button 1
+		display dialog "Дамп записан в " & kOutPath & return & return & "Пришлите содержимое этого файла следующему агенту:" & return & "cat " & kOutPath buttons {"OK"} default button 1
 	on error errMsg number errNum
 		try
-			my writeLine("FATAL: " & errNum & " — " & errMsg)
+			my logLn("FATAL: " & errNum & " — " & errMsg)
 		end try
 		display dialog "Ошибка дампера (" & errNum & "):" & return & return & errMsg buttons {"OK"} default button 1 with icon stop
 	end try
 end run
 
-on reset()
+------------------------------------------------------------------------------
+-- I/O
+------------------------------------------------------------------------------
+
+on resetLog()
 	do shell script "echo -n '' > " & quoted form of kOutPath
-end reset
+end resetLog
 
-on writeLine(s)
+on logLn(theStr)
 	try
-		do shell script "printf '%s\\n' " & quoted form of (s as text) & " >> " & quoted form of kOutPath
+		do shell script "printf '%s\\n' " & quoted form of (theStr as text) & " >> " & quoted form of kOutPath
 	end try
-end writeLine
+end logLn
 
-on bytesWritten()
+on logBytes()
 	try
 		return (do shell script "/usr/bin/stat -f %z " & quoted form of kOutPath) as integer
 	on error
 		return 0
 	end try
-end bytesWritten
+end logBytes
+
+------------------------------------------------------------------------------
+-- MENU BAR
+------------------------------------------------------------------------------
 
 on dumpMenuBar()
-	my writeLine("--- MENU BAR ---")
+	my logLn("--- MENU BAR ---")
 	tell application "System Events"
 		tell process kAppName
 			try
-				set bars to every menu bar
-				my writeLine("menu bars: " & (count of bars))
-				if (count of bars) > 0 then
-					set bar1 to menu bar 1
-					set topMenus to every menu of bar1
-					my writeLine("top menus: " & (count of topMenus))
-					repeat with menuRef in topMenus
-						set mEl to (contents of menuRef)
-						set mName to ""
-						try
-							set mName to (name of mEl as text)
-						end try
-						my writeLine("")
-						my writeLine("[MENU] " & mName)
-						try
-							set itemList to every menu item of mEl
-							my writeLine("  items: " & (count of itemList))
-							repeat with itemRef in itemList
-								my dumpMenuItem((contents of itemRef), "  ")
-							end repeat
-						on error eMsg
-							my writeLine("  (не смог перечислить пункты: " & eMsg & ")")
-						end try
-					end repeat
-				end if
-			on error e
-				my writeLine("ОШИБКА dumpMenuBar: " & e)
+				set barCount to count of menu bars
+				my logLn("menu bars: " & barCount)
+				if barCount is 0 then return
+
+				set bar1 to menu bar 1
+				set topMenus to every menu of bar1
+				my logLn("top menus: " & (count of topMenus))
+
+				repeat with menuRef in topMenus
+					set mEl to (contents of menuRef)
+					set mName to my safeName(mEl)
+					my logLn("")
+					my logLn("[MENU] " & mName)
+					try
+						set itemList to every menu item of mEl
+						my logLn("  items: " & (count of itemList))
+						repeat with itemRef in itemList
+							my dumpMenuItem((contents of itemRef), "  ")
+						end repeat
+					on error e1
+						my logLn("  (не смог перечислить пункты: " & e1 & ")")
+					end try
+				end repeat
+			on error e2
+				my logLn("ERROR dumpMenuBar: " & e2)
 			end try
 		end tell
 	end tell
 end dumpMenuBar
 
 on dumpMenuItem(itEl, indent)
-	set itName to ""
-	set itEnabled to "?"
-	set itAxId to ""
-	set itCmd to ""
-	set itMods to ""
-	try
-		set itName to (name of itEl as text)
-	end try
-	try
-		set itEnabled to (enabled of itEl as text)
-	end try
-	try
-		set itAxId to (value of attribute "AXIdentifier" of itEl as text)
-	end try
-	try
-		set itCmd to (value of attribute "AXMenuItemCmdChar" of itEl as text)
-	end try
-	try
-		set itMods to (value of attribute "AXMenuItemCmdModifiers" of itEl as text)
-	end try
-	my writeLine(indent & "- name=" & itName & " | enabled=" & itEnabled & " | AXId=" & itAxId & " | cmd=" & itCmd & " | mods=" & itMods)
-	-- Подменю.
-	try
-		set sub to menu 1 of itEl
+	set itName to my safeName(itEl)
+	set itEnabled to my safeEnabled(itEl)
+	set itAxId to my safeAttr(itEl, "AXIdentifier")
+	set itCmd to my safeAttr(itEl, "AXMenuItemCmdChar")
+	set itMods to my safeAttr(itEl, "AXMenuItemCmdModifiers")
+	my logLn(indent & "- name=" & itName & " | enabled=" & itEnabled & " | AXId=" & itAxId & " | cmd=" & itCmd & " | mods=" & itMods)
+
+	-- Подменю, если есть.
+	tell application "System Events"
 		try
-			set subItems to every menu item of sub
-			repeat with subRef in subItems
+			set subList to every menu item of menu 1 of itEl
+			repeat with subRef in subList
 				my dumpMenuItem((contents of subRef), indent & "    ")
 			end repeat
 		end try
-	end try
+	end tell
 end dumpMenuItem
 
+------------------------------------------------------------------------------
+-- WINDOWS
+------------------------------------------------------------------------------
+
 on dumpWindows()
-	my writeLine("--- WINDOWS ---")
+	my logLn("--- WINDOWS ---")
 	tell application "System Events"
 		tell process kAppName
 			try
 				set wins to every window
-				my writeLine("count=" & (count of wins))
+				my logLn("count=" & (count of wins))
 				repeat with winRef in wins
 					set wEl to (contents of winRef)
-					set wName to ""
-					set wRole to ""
-					set wPos to ""
-					set wSize to ""
-					try
-						set wName to (name of wEl as text)
-					end try
-					try
-						set wRole to (role of wEl as text)
-					end try
-					try
-						set wPos to (position of wEl as text)
-					end try
-					try
-						set wSize to (size of wEl as text)
-					end try
-					my writeLine("- window name=" & wName & " | role=" & wRole & " | pos=" & wPos & " | size=" & wSize)
+					set wName to my safeName(wEl)
+					set wRole to my safeRole(wEl)
+					set wPos to my safePosition(wEl)
+					set wSize to my safeSize(wEl)
+					my logLn("- name=" & wName & " | role=" & wRole & " | pos=" & wPos & " | size=" & wSize)
 				end repeat
-			on error eMsg
-				my writeLine("ОШИБКА dumpWindows: " & eMsg)
+			on error eW
+				my logLn("ERROR dumpWindows: " & eW)
 			end try
 		end tell
 	end tell
 end dumpWindows
 
+------------------------------------------------------------------------------
+-- AX TREE
+------------------------------------------------------------------------------
+
 on dumpFrontWindowTree()
-	my writeLine("--- FRONT WINDOW TREE ---")
+	my logLn("--- FRONT WINDOW TREE ---")
 	tell application "System Events"
 		tell process kAppName
 			try
 				if (count of windows) is 0 then
-					my writeLine("(окон нет)")
+					my logLn("(окон нет)")
 					return
 				end if
-				set w to window 1
-				my dumpElement((contents of w), 0)
-			on error e
-				my writeLine("ОШИБКА dumpFrontWindowTree: " & e)
+				set w1 to window 1
+				my dumpElement((contents of w1), 0)
+			on error eT
+				my logLn("ERROR dumpFrontWindowTree: " & eT)
 			end try
 		end tell
 	end tell
@@ -190,39 +174,115 @@ end dumpFrontWindowTree
 
 on dumpElement(el, depth)
 	if depth > kMaxDepth then return
-	if (my bytesWritten()) > kMaxBytes then
-		my writeLine((my pad(depth)) & "... (превышен лимит размера дампа)")
+	if (my logBytes()) > kMaxBytes then
+		my logLn((my pad(depth)) & "... (превышен лимит размера дампа)")
 		return
 	end if
 	set indent to my pad(depth)
-	set role_ to ""
-	set name_ to ""
-	set desc_ to ""
-	set axId to ""
-	set val_ to ""
-	try
-		set role_ to (role of el as text)
-	end try
-	try
-		set name_ to (name of el as text)
-	end try
-	try
-		set desc_ to (description of el as text)
-	end try
-	try
-		set axId to (value of attribute "AXIdentifier" of el as text)
-	end try
-	try
-		set val_ to (value of el as text)
-	end try
-	my writeLine(indent & role_ & "  name=" & name_ & "  desc=" & desc_ & "  AXId=" & axId & "  value=" & val_)
-	try
-		set kids to every UI element of el
-		repeat with kidRef in kids
-			my dumpElement((contents of kidRef), depth + 1)
-		end repeat
-	end try
+	set rRole to my safeRole(el)
+	set rName to my safeName(el)
+	set rDesc to my safeDesc(el)
+	set rAxId to my safeAttr(el, "AXIdentifier")
+	set rVal to my safeValue(el)
+	my logLn(indent & rRole & "  name=" & rName & "  desc=" & rDesc & "  AXId=" & rAxId & "  value=" & rVal)
+	tell application "System Events"
+		try
+			set kids to every UI element of el
+			repeat with kidRef in kids
+				my dumpElement((contents of kidRef), depth + 1)
+			end repeat
+		end try
+	end tell
 end dumpElement
+
+------------------------------------------------------------------------------
+-- Безопасные геттеры (никогда не падают)
+------------------------------------------------------------------------------
+
+on safeName(el)
+	tell application "System Events"
+		try
+			set v to name of el
+			if v is missing value then return ""
+			return (v as text)
+		end try
+	end tell
+	return ""
+end safeName
+
+on safeRole(el)
+	tell application "System Events"
+		try
+			set v to role of el
+			if v is missing value then return ""
+			return (v as text)
+		end try
+	end tell
+	return ""
+end safeRole
+
+on safeDesc(el)
+	tell application "System Events"
+		try
+			set v to description of el
+			if v is missing value then return ""
+			return (v as text)
+		end try
+	end tell
+	return ""
+end safeDesc
+
+on safeValue(el)
+	tell application "System Events"
+		try
+			set v to value of el
+			if v is missing value then return ""
+			return (v as text)
+		end try
+	end tell
+	return ""
+end safeValue
+
+on safeEnabled(el)
+	tell application "System Events"
+		try
+			set v to enabled of el
+			return (v as text)
+		end try
+	end tell
+	return "?"
+end safeEnabled
+
+on safeAttr(el, attrName)
+	tell application "System Events"
+		try
+			set v to value of attribute attrName of el
+			if v is missing value then return ""
+			return (v as text)
+		end try
+	end tell
+	return ""
+end safeAttr
+
+on safePosition(el)
+	tell application "System Events"
+		try
+			set v to position of el
+			return (v as text)
+		end try
+	end tell
+	return ""
+end safePosition
+
+on safeSize(el)
+	tell application "System Events"
+		try
+			set v to size of el
+			return (v as text)
+		end try
+	end tell
+	return ""
+end safeSize
 
 on pad(n)
 	set s to ""
