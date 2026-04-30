@@ -653,7 +653,7 @@ on triggerExport()
 	tell application "System Events"
 		set frontmost of process kAppName to true
 	end tell
-	delay 0.2
+	delay 0.3
 
 	-- Стратегия 1: AX-кнопка "Экспорт" в окне клипа (AXId=exportButton).
 	-- Это единственный надёжный путь для .360 файлов — пункт меню Файл→Экспорт
@@ -663,7 +663,13 @@ on triggerExport()
 		return
 	end if
 
-	-- Стратегия 2: пункт меню Файл → Экспорт (вдруг для .mp4 он активен).
+	-- Стратегия 2: клик по статическому тексту с подписью "Экспорт".
+	if my clickStaticTextLabeled("Экспорт") then
+		my logLine("triggerExport: клик по static text Экспорт OK")
+		return
+	end if
+
+	-- Стратегия 3: пункт меню Файл → Экспорт (вдруг для .mp4 он активен).
 	tell application "System Events"
 		tell process kAppName
 			repeat with menuName in {"Файл", "File"}
@@ -681,46 +687,165 @@ on triggerExport()
 		end tell
 	end tell
 
-	-- Стратегия 3: keystroke ⌘E (shortcut пункта Экспорт).
-	my logLine("triggerExport: AX-кнопка не найдена и меню disabled, шлю ⌘E")
+	-- Стратегия 4: keystroke ⌘E (shortcut пункта Экспорт).
+	my logLine("triggerExport: ничего не сработало, шлю ⌘E")
 	tell application "System Events" to tell process kAppName
 		keystroke "e" using {command down}
 	end tell
 end triggerExport
 
+on clickStaticTextLabeled(labelText)
+	-- Находит первый AXStaticText с заданным name/value в окне клипа
+	-- и кликает в его центр через координатный клик.
+	tell application "System Events"
+		tell process kAppName
+			try
+				if (count of windows) is 0 then return false
+				set found to my findStaticByText(window 1, labelText, 0, 6)
+				if found is missing value then return false
+				set posVal to position of found
+				set sizeVal to size of found
+				set cx to ((item 1 of posVal) as integer) + ((item 1 of sizeVal) as integer) div 2
+				set cy to ((item 2 of posVal) as integer) + ((item 2 of sizeVal) as integer) div 2
+				my logLine("clickStaticTextLabeled('" & labelText & "'): " & cx & "," & cy)
+				tell application kAppName to activate
+				delay 0.15
+				try
+					click at {cx, cy}
+					return true
+				end try
+			end try
+		end tell
+	end tell
+	return false
+end clickStaticTextLabeled
+
+on findStaticByText(rootEl, labelText, depth, maxDepth)
+	if depth > maxDepth then return missing value
+	tell application "System Events"
+		try
+			set rRole to role of rootEl
+			if (rRole as text) is "AXStaticText" then
+				try
+					set rN to name of rootEl
+					if rN is not missing value and (rN as text) is (labelText as text) then return rootEl
+				end try
+				try
+					set rV to value of rootEl
+					if rV is not missing value and (rV as text) is (labelText as text) then return rootEl
+				end try
+			end if
+		end try
+		try
+			set kids to every UI element of rootEl
+			repeat with kRef in kids
+				set hit to my findStaticByText((contents of kRef), labelText, depth + 1, maxDepth)
+				if hit is not missing value then return hit
+			end repeat
+		end try
+	end tell
+	return missing value
+end findStaticByText
+
 on clickExportButton()
-	-- Ищет в окне 1 элемент с AXIdentifier = "exportButton" и кликает по нему.
-	-- В дампе это AXUnknown с дочерним AXStaticText "Экспорт".
+	-- Ищет в окне 1 элемент с AXIdentifier = "exportButton" и кликает.
+	-- В дампе это AXUnknown с дочерним AXImage и AXStaticText «Экспорт».
+	-- AXUnknown часто не реагирует ни на AXPress, ни на click —
+	-- поэтому используем несколько стратегий по нарастающей агрессивности.
+	set theBtn to missing value
 	tell application "System Events"
 		tell process kAppName
 			try
 				if (count of windows) is 0 then return false
 				set theBtn to my findByAxId(window 1, "exportButton", 0, 6)
-				if theBtn is missing value then return false
-				-- AXUnknown иногда не реагирует на click. Пробуем three ways:
-				-- 1) AXPress action;
-				-- 2) click;
-				-- 3) клик по позиции центра.
-				try
-					perform action "AXPress" of theBtn
-					return true
-				end try
-				try
-					click theBtn
-					return true
-				end try
-				try
-					set p to position of theBtn
-					set sz to size of theBtn
-					set cx to ((item 1 of p) as integer) + ((item 1 of sz) as integer) / 2
-					set cy to ((item 2 of p) as integer) + ((item 2 of sz) as integer) / 2
-					click at {cx as integer, cy as integer}
-					return true
-				end try
 			end try
-			return false
 		end tell
 	end tell
+	if theBtn is missing value then
+		my logLine("clickExportButton: AXId=exportButton не найден в окне")
+		return false
+	end if
+
+	-- Стратегия 1: AXPress action на сам элемент.
+	tell application "System Events"
+		try
+			perform action "AXPress" of theBtn
+			my logLine("clickExportButton: AXPress на exportButton — без ошибки")
+			-- Не уверены что сработало; вызывающий проверит появление sheet.
+			return true
+		on error eMsg
+			my logLine("clickExportButton: AXPress fail: " & eMsg)
+		end try
+	end tell
+
+	-- Стратегия 2: click на сам AXUnknown.
+	tell application "System Events"
+		try
+			click theBtn
+			my logLine("clickExportButton: click theBtn — без ошибки")
+			return true
+		on error eMsg
+			my logLine("clickExportButton: click fail: " & eMsg)
+		end try
+	end tell
+
+	-- Стратегия 3: AXPress / click на дочернюю AXImage или AXStaticText.
+	tell application "System Events"
+		try
+			set kids to every UI element of theBtn
+			repeat with kRef in kids
+				set kEl to (contents of kRef)
+				try
+					perform action "AXPress" of kEl
+					my logLine("clickExportButton: AXPress на дочернем элементе — без ошибки")
+					return true
+				end try
+				try
+					click kEl
+					my logLine("clickExportButton: click на дочернем элементе — без ошибки")
+					return true
+				end try
+			end repeat
+		end try
+	end tell
+
+	-- Стратегия 4: физический мышиный клик в центр элемента.
+	-- Используем cliclick если установлен (brew install cliclick), иначе
+	-- AppleScript-обёртку через System Events click at.
+	try
+		set posVal to {0, 0}
+		set sizeVal to {0, 0}
+		tell application "System Events"
+			set posVal to position of theBtn
+			set sizeVal to size of theBtn
+		end tell
+		set cx to ((item 1 of posVal) as integer) + ((item 1 of sizeVal) as integer) div 2
+		set cy to ((item 2 of posVal) as integer) + ((item 2 of sizeVal) as integer) div 2
+		my logLine("clickExportButton: координаты центра кнопки = " & cx & "," & cy)
+
+		-- Активируем окно, чтобы клик пошёл по нему.
+		tell application kAppName to activate
+		delay 0.2
+
+		-- 4a) cliclick если есть.
+		try
+			do shell script "/usr/bin/which cliclick > /dev/null 2>&1 && /usr/local/bin/cliclick c:" & cx & "," & cy & " || /opt/homebrew/bin/cliclick c:" & cx & "," & cy
+			my logLine("clickExportButton: cliclick на " & cx & "," & cy)
+			return true
+		end try
+
+		-- 4b) System Events «click at» в абсолютных координатах.
+		try
+			tell application "System Events" to click at {cx, cy}
+			my logLine("clickExportButton: click at " & cx & "," & cy)
+			return true
+		end try
+	on error eMsg
+		my logLine("clickExportButton: координатный клик fail: " & eMsg)
+	end try
+
+	my logLine("clickExportButton: ВСЕ стратегии не сработали")
+	return false
 end clickExportButton
 
 on findByAxId(rootEl, targetId, depth, maxDepth)
