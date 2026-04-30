@@ -777,29 +777,30 @@ on setSliderByLabel(container, labels, normalizedValue)
 		set targetSlider to missing value
 
 		try
-			set sliders to every slider of container
-			repeat with s in sliders
+			set sldList to every slider of container
+			repeat with sldRef in sldList
 				if targetSlider is missing value then
 					set matched to false
+					set sldEl to (contents of sldRef)
 					try
-						set sn to name of s
-						if sn is not missing value then
+						set sName to name of sldEl
+						if sName is not missing value then
 							repeat with lbl in labels
-								if (sn as text) contains (lbl as text) then set matched to true
+								if (sName as text) contains (lbl as text) then set matched to true
 							end repeat
 						end if
 					end try
 					if not matched then
 						try
-							set sd to description of s
-							if sd is not missing value then
+							set sDesc to description of sldEl
+							if sDesc is not missing value then
 								repeat with lbl in labels
-									if (sd as text) contains (lbl as text) then set matched to true
+									if (sDesc as text) contains (lbl as text) then set matched to true
 								end repeat
 							end if
 						end try
 					end if
-					if matched then set targetSlider to s
+					if matched then set targetSlider to sldEl
 				end if
 			end repeat
 		end try
@@ -807,14 +808,16 @@ on setSliderByLabel(container, labels, normalizedValue)
 		if targetSlider is missing value then
 			try
 				set labelEl to missing value
-				set staticTexts to every static text of container
-				repeat with st in staticTexts
+				set txtList to every static text of container
+				repeat with txtRef in txtList
 					if labelEl is missing value then
 						try
-							set tv to value of st
+							set tv to value of (contents of txtRef)
 							if tv is not missing value then
 								repeat with lbl in labels
-									if (tv as text) contains (lbl as text) then set labelEl to st
+									if (tv as text) contains (lbl as text) then
+										set labelEl to (contents of txtRef)
+									end if
 								end repeat
 							end if
 						end try
@@ -823,21 +826,21 @@ on setSliderByLabel(container, labels, normalizedValue)
 				if labelEl is not missing value then
 					set lblPos to position of labelEl
 					set lblY to (item 2 of lblPos) as integer
-					set sliders to every slider of container
-					set bestS to missing value
+					set sldList to every slider of container
+					set bestSld to missing value
 					set bestDy to 99999
-					repeat with s in sliders
+					repeat with sldRef in sldList
 						try
-							set sp to position of s
+							set sp to position of (contents of sldRef)
 							set sy to (item 2 of sp) as integer
 							set dy to sy - lblY
 							if dy ≥ 0 and dy < bestDy then
 								set bestDy to dy
-								set bestS to s
+								set bestSld to (contents of sldRef)
 							end if
 						end try
 					end repeat
-					if bestS is not missing value then set targetSlider to bestS
+					if bestSld is not missing value then set targetSlider to bestSld
 				end if
 			end try
 		end if
