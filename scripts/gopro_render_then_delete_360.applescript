@@ -1440,13 +1440,15 @@ end findStaticTextLabeled
 on centerOf(uiEl)
 	if uiEl is missing value then return missing value
 	tell application "System Events"
-		try
-			set posVal to position of uiEl
-			set sizeVal to size of uiEl
-			set cx to ((item 1 of posVal) as integer) + ((item 1 of sizeVal) as integer) div 2
-			set cy to ((item 2 of posVal) as integer) + ((item 2 of sizeVal) as integer) div 2
-			return {cx, cy}
-		end try
+		tell process kAppName
+			try
+				set posVal to position of uiEl
+				set sizeVal to size of uiEl
+				set cx to ((item 1 of posVal) as integer) + ((item 1 of sizeVal) as integer) div 2
+				set cy to ((item 2 of posVal) as integer) + ((item 2 of sizeVal) as integer) div 2
+				return {cx, cy}
+			end try
+		end tell
 	end tell
 	return missing value
 end centerOf
@@ -1972,38 +1974,62 @@ on selectRadio(container, labels)
 	return false
 end selectRadio
 
-on collectRadios(container)
+on collectRadios(unusedContainer)
+	-- Параметр игнорируем; ищем sheet/окно прямо здесь — это единственный
+	-- способ гарантировать, что ссылки получены внутри корректного
+	-- tell process контекста и System Events видит элементы.
 	set out to {}
 	tell application "System Events"
 		tell process kAppName
 			try
-				set rgs to every radio group of container
-				repeat with rgRef in rgs
-					try
-						set rbs to every radio button of (contents of rgRef)
-						repeat with rbRef in rbs
-							set end of out to rbRef
-						end repeat
-					end try
-				end repeat
-			end try
-			try
-				set extra to every radio button of container
-				repeat with rbRef in extra
-					set end of out to rbRef
-				end repeat
+				set sh to my localExportContainer()
+				if sh is missing value then return out
+				try
+					set rgs to every radio group of sh
+					repeat with rgRef in rgs
+						try
+							set rbs to every radio button of (contents of rgRef)
+							repeat with rbRef in rbs
+								set end of out to (contents of rbRef)
+							end repeat
+						end try
+					end repeat
+				end try
+				try
+					set extra to every radio button of sh
+					repeat with rbRef in extra
+						set end of out to (contents of rbRef)
+					end repeat
+				end try
 			end try
 		end tell
 	end tell
 	return out
 end collectRadios
 
-on setCheckboxByName(container, labels, desiredOn)
+on localExportContainer()
+	-- Возвращает sheet 1 of window 1 — вызывать ТОЛЬКО изнутри
+	-- tell application "System Events" / tell process kAppName.
+	try
+		if (count of windows) is 0 then return missing value
+		if (exists sheet 1 of window 1) then return sheet 1 of window 1
+		return window 1
+	end try
+	return missing value
+end localExportContainer
+
+on setCheckboxByName(unusedContainer, labels, desiredOn)
+	-- Контейнер берём свежий внутри tell process (см. collectRadios).
 	set boxes to {}
 	tell application "System Events"
 		tell process kAppName
 			try
-				set boxes to every checkbox of container
+				set sh to my localExportContainer()
+				if sh is missing value then return false
+				set rawBoxes to every checkbox of sh
+				repeat with cbRef in rawBoxes
+					set end of boxes to (contents of cbRef)
+				end repeat
 			end try
 		end tell
 	end tell
@@ -2055,14 +2081,20 @@ on pressUiElement(uiEl, label)
 	if uiEl is missing value then return false
 	set startVal to "<no-value>"
 	tell application "System Events"
-		try
-			set startVal to (value of uiEl as text)
-		end try
+		tell process kAppName
+			try
+				set startVal to (value of uiEl as text)
+			end try
+		end tell
 	end tell
 
 	-- A. AXPress.
 	try
-		tell application "System Events" to perform action "AXPress" of uiEl
+		tell application "System Events"
+			tell process kAppName
+				perform action "AXPress" of uiEl
+			end tell
+		end tell
 		delay 0.25
 		if my elementValueChanged(uiEl, startVal) then return true
 	end try
@@ -2105,10 +2137,12 @@ end pressUiElement
 
 on elementValueChanged(uiEl, beforeVal)
 	tell application "System Events"
-		try
-			set nowVal to (value of uiEl as text)
-			if nowVal is not beforeVal then return true
-		end try
+		tell process kAppName
+			try
+				set nowVal to (value of uiEl as text)
+				if nowVal is not beforeVal then return true
+			end try
+		end tell
 	end tell
 	return false
 end elementValueChanged
