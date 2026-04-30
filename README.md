@@ -17,7 +17,8 @@
 | [`scripts/gopro_batch_open_finder.applescript`](scripts/gopro_batch_open_finder.applescript) | Открыть выделенные в Finder файлы в GoPro Player |
 | [`scripts/gopro_batch_export_folder.applescript`](scripts/gopro_batch_export_folder.applescript) | Пакетный экспорт всех видео из выбранной папки |
 | [`scripts/gopro_convert_360_to_mp4.applescript`](scripts/gopro_convert_360_to_mp4.applescript) | Рекурсивная конвертация всех `.360` файлов в `.mp4` с настраиваемыми параметрами (универсальный, поэлементно ждёт окончания каждого экспорта) |
-| [`scripts/gopro_queue_360_to_mp4.applescript`](scripts/gopro_queue_360_to_mp4.applescript) | **Рекомендуемый**: ставит все `.360` в очередь экспорта GoPro Player одним проходом (использует кнопку «Отправить в очередь»). Точно ложится на UI «Настройки экспорта» (русская локаль) |
+| [`scripts/gopro_queue_360_to_mp4.applescript`](scripts/gopro_queue_360_to_mp4.applescript) | Ставит все `.360` в очередь экспорта GoPro Player одним проходом (использует кнопку «Отправить в очередь») |
+| [`scripts/gopro_render_then_delete_360.applescript`](scripts/gopro_render_then_delete_360.applescript) | **Один файл за раз**: рендерит `.360`, ждёт окончания, проверяет результат, **удаляет исходник** (Корзина / `rm` / не трогать) и переходит к следующему |
 | [`scripts/gopro_quit.applescript`](scripts/gopro_quit.applescript) | Корректно завершить приложение |
 | [`scripts/gopro_controller.applescript`](scripts/gopro_controller.applescript) | Универсальный контроллер с handlers (можно `load script`) |
 
@@ -51,6 +52,76 @@ goproLib's playPause()
 goproLib's seekBy(15)
 goproLib's exportCurrent()
 ```
+
+## Конвертация `.360` → `.mp4` по одному файлу с удалением исходников
+
+Сценарий [`scripts/gopro_render_then_delete_360.applescript`](scripts/gopro_render_then_delete_360.applescript) — это «съел исходник, выплюнул mp4». Он идёт по `.360` файлам по одному и **только после успешного рендера** удаляет исходник.
+
+### Как скрипт находит исходники
+
+Источник определяется в таком порядке (что нашлось — то и используется):
+
+1. **CLI-аргумент**:
+
+   ```bash
+   osascript scripts/gopro_render_then_delete_360.applescript ~/Footage/Max
+   osascript scripts/gopro_render_then_delete_360.applescript /Volumes/GoPro/DCIM/100GOPRO/GS010001.360
+   ```
+
+   Можно передать как папку, так и одиночный `.360` файл.
+
+2. **Свойство в скрипте** — задайте путь жёстко в начале файла:
+
+   ```applescript
+   property kSourceFolder : "/Users/me/Footage/Max"
+   ```
+
+3. **Droplet** — сохраните скрипт через **Script Editor → File → Export… → File Format: Application** (например, `GoPro 360 Render.app`). После этого можно просто **перетащить папку или несколько `.360` файлов на иконку приложения** — обработает их.
+
+4. **Диалог** — если ничего из вышеперечисленного не задано, появится `choose folder` для выбора папки.
+
+Поиск внутри папки рекурсивный (`find -type f -iname '*.360'`), регистр не важен.
+
+### Куда сохраняется результат
+
+В `kOutputFolder` (если пусто — спросит при запуске). Имя выходного файла — `<имя_исходника>.mp4`. Если такой `.mp4` уже существует и непустой, рендер пропускается, а исходник всё равно удаляется (можно использовать как «дочистку» после прерванного прогона).
+
+### Что происходит с исходником
+
+Управляется свойством `kDeleteMode`:
+
+| Значение | Что делает |
+|---|---|
+| `"trash"` *(по умолчанию)* | Перемещает `.360` в **Корзину** через Finder — можно восстановить |
+| `"rm"` | Удаляет безвозвратно (`/bin/rm -f`) |
+| `"none"` | Ничего не делает (для теста) |
+
+Удаление происходит **только** если:
+1. Рендер завершился без исключений.
+2. Целевой `.mp4` существует.
+3. Размер `.mp4` больше 1 КБ (защита от пустого/обрезанного файла).
+4. Размер `.mp4` стабилен в течение `kStableSeconds` подряд (по умолчанию 5 сек) — это и есть «маркер окончания рендера»: GoPro Player пишет файл потоково, и пока он растёт, мы ждём.
+
+### Как определяется окончание рендера
+
+Без полагаться на UI прогресса (его подписи плавают между версиями), скрипт следит за самим выходным файлом:
+
+1. После клика «Далее…» → «Сохранить» закрывает окно клипа.
+2. В цикле опрашивает размер `.mp4` через `stat -f %z` каждую секунду.
+3. Считает рендер завершённым, когда размер не меняется `kStableSeconds` секунд подряд.
+4. Жёсткий таймаут — `kRenderTimeout` (по умолчанию 1 час).
+
+Это надёжно работает даже если GoPro Player в это время уже подхватил следующий файл из очереди — нас интересует именно конкретный `.mp4`.
+
+### Запуск
+
+```bash
+osascript scripts/gopro_render_then_delete_360.applescript                 # с диалогами
+osascript scripts/gopro_render_then_delete_360.applescript ~/Footage/Max   # с папкой
+tail -f /tmp/gopro_360_to_mp4.log
+```
+
+> **Совет**: первый прогон сделайте с `kDeleteMode : "none"` или `"trash"`, чтобы убедиться, что параметры рендера и пути выбраны правильно. `"rm"` ставьте, только когда уверены.
 
 ## Конвертация `.360` → `.mp4` (через очередь экспорта — рекомендуется)
 
