@@ -1364,25 +1364,65 @@ on setSaveFileName(newName)
 	if s is missing value then return
 	tell application "System Events"
 		tell process kAppName
+			-- Способ 1: прямая запись в text field (надёжно, без раскладки).
 			try
 				set value of text field 1 of s to newName
+				my logLine("setSaveFileName: text field 1 ← '" & newName & "'")
+				return
+			end try
+			-- Способ 2: select-all + paste из буфера обмена.
+			try
+				my pasteIntoFocus(newName)
+				my logLine("setSaveFileName: paste '" & newName & "' (clipboard)")
+				return
 			end try
 		end tell
 	end tell
 end setSaveFileName
 
 on navigateSaveSheetToFolder(posixFolder)
+	-- ⇧⌘G открывает «Перейти к папке…» в save-sheet. Путь вводим через
+	-- буфер обмена, потому что keystroke учитывает раскладку клавиатуры —
+	-- на русской раскладке латинские пути превращаются в кириллицу.
+	my logLine("navigateSaveSheetToFolder: → " & posixFolder)
+	tell application kAppName to activate
+	delay 0.2
 	tell application "System Events"
 		tell process kAppName
 			keystroke "g" using {command down, shift down}
-			delay 0.5
-			keystroke posixFolder
-			delay 0.3
-			keystroke return
-			delay 0.5
 		end tell
 	end tell
+	delay 0.7
+	-- Вставка пути.
+	my pasteIntoFocus(posixFolder)
+	delay 0.4
+	tell application "System Events"
+		tell process kAppName
+			keystroke return
+		end tell
+	end tell
+	delay 0.7
 end navigateSaveSheetToFolder
+
+on pasteIntoFocus(theStr)
+	-- Кладёт строку в буфер обмена и вставляет ⌘V.
+	-- Не зависит от раскладки клавиатуры — это критично, потому что
+	-- keystroke шлёт нажатия физических клавиш, и латинский "/" на
+	-- русской раскладке превращается в "|", а буквы — в кириллицу.
+	try
+		do shell script "/bin/echo -n " & quoted form of (theStr as text) & " | /usr/bin/pbcopy"
+	end try
+	delay 0.15
+	tell application "System Events"
+		tell process kAppName
+			-- Очищаем поле, потом вставляем.
+			keystroke "a" using {command down}
+			delay 0.1
+			keystroke "v" using {command down}
+		end tell
+	end tell
+	delay 0.2
+end pasteIntoFocus
 
 on clickButtonByNames(container, names)
 	if container is missing value then return false
