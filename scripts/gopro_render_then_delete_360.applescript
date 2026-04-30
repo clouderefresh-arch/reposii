@@ -414,14 +414,13 @@ on renderOne(srcPosix, outFolderPosix, baseName)
 	delay kPostOpenDelay
 	my waitForDocumentLoaded()
 
-	-- Ждём, пока пункт меню 'Экспорт…' станет активным — это означает, что
-	-- GoPro Player закончил декодирование и готов экспортировать.
-	-- На сетевых/внешних томах декодирование .360 может занимать
-	-- десятки секунд — без этого ожидания мы клацаем по неактивному меню,
-	-- sheet не появляется и потом срабатывает таймаут (-2700).
-	my waitForExportEnabled()
+	-- Ждём, пока клип реально декодируется (durationLabel получит длительность).
+	-- На сетевых/внешних томах это может занимать десятки секунд.
+	my waitForClipReady()
 
-	-- Триггерим экспорт; до 3 попыток, если sheet не появился.
+	-- Триггерим экспорт через КНОПКУ "Экспорт" в окне клипа (AXId=exportButton).
+	-- Меню Файл → Экспорт в этой версии GoPro Player для .360 файлов всегда
+	-- disabled — экспорт делается только через кнопку в окне.
 	set sheetOpened to false
 	repeat with attempt from 1 to kExportRetries
 		my triggerExport()
@@ -431,7 +430,6 @@ on renderOne(srcPosix, outFolderPosix, baseName)
 		end if
 		my logLine("Sheet не появился (попытка " & attempt & "), повторяю…")
 		delay 1.5
-		-- Возвращаем фокус, иногда macOS «съедает» меню при первом клике.
 		tell application kAppName to activate
 		delay 0.5
 	end repeat
@@ -557,64 +555,137 @@ on waitForDocumentLoaded()
 	end tell
 end waitForDocumentLoaded
 
-on waitForExportEnabled()
-	-- Ждём, пока пункт меню Экспорт станет активным (enabled = true).
-	-- На сетевом томе .360 файл сначала «прогревается» — пока этот пункт
-	-- не активен, кликать в него бессмысленно: System Events не откроет
-	-- меню, но и ошибки не вернёт.
+on waitForClipReady()
+	-- Ждём, пока в окне появится экспорт-кнопка (AXId=exportButton)
+	-- ИЛИ durationLabel получит длительность (значит клип реально декодирован).
+	-- На сетевом томе .360 файл «прогревается» — кликать раньше бессмысленно.
 	set elapsed to 0
 	repeat while elapsed < kExportEnabledTimeout
-		set isEnabled to my exportMenuEnabled()
-		if isEnabled then return
+		if my clipIsReady() then
+			my logLine("waitForClipReady: клип готов через " & elapsed & " сек")
+			return
+		end if
 		delay 0.5
 		set elapsed to elapsed + 0.5
 	end repeat
-	my logLine("ВНИМАНИЕ: пункт Экспорт не активировался за " & kExportEnabledTimeout & " сек — пробую всё равно.")
-end waitForExportEnabled
+	my logLine("ВНИМАНИЕ: клип не подал признаков готовности за " & kExportEnabledTimeout & " сек — пробую всё равно.")
+end waitForClipReady
 
-on exportMenuEnabled()
+on clipIsReady()
+	tell application "System Events"
+		tell process kAppName
+			try
+				if (count of windows) is 0 then return false
+				set w1 to window 1
+				-- Признак 1: есть AX-кнопка экспорта.
+				try
+					if (my findByAxId(w1, "exportButton", 0, 6)) is not missing value then return true
+				end try
+				-- Признак 2: durationLabel содержит время длиннее " / 00:00".
+				try
+					set dl to my findByAxId(w1, "durationLabel", 0, 6)
+					if dl is not missing value then
+						set dv to value of dl
+						if dv is not missing value and (dv as text) is not " / 00:00" and (dv as text) is not "" then return true
+					end if
+				end try
+			end try
+			return false
+		end tell
+	end tell
+end clipIsReady
+
+on triggerExport()
+	tell application "System Events"
+		set frontmost of process kAppName to true
+	end tell
+	delay 0.2
+
+	-- Стратегия 1: AX-кнопка "Экспорт" в окне клипа (AXId=exportButton).
+	-- Это единственный надёжный путь для .360 файлов — пункт меню Файл→Экспорт
+	-- у GoPro Player для .360 всегда disabled.
+	if my clickExportButton() then
+		my logLine("triggerExport: AX-кнопка exportButton OK")
+		return
+	end if
+
+	-- Стратегия 2: пункт меню Файл → Экспорт (вдруг для .mp4 он активен).
 	tell application "System Events"
 		tell process kAppName
 			repeat with menuName in {"Файл", "File"}
-				repeat with itemName in {"Экспорт…", "Экспорт...", "Export…", "Export..."}
+				repeat with itemName in {"Экспорт", "Экспорт…", "Экспорт...", "Export", "Export…", "Export..."}
 					try
 						set mi to menu item (itemName as text) of menu (menuName as text) of menu bar 1
-						if exists mi then
-							try
-								return (enabled of mi as boolean)
-							end try
+						if (enabled of mi) is true then
+							click mi
+							my logLine("triggerExport: меню '" & (itemName as text) & "' OK")
+							return
 						end if
 					end try
 				end repeat
 			end repeat
 		end tell
 	end tell
-	return false
-end exportMenuEnabled
 
-on triggerExport()
-	tell application "System Events"
-		set frontmost of process kAppName to true
-		tell process kAppName
-			set ok to false
-			repeat with menuName in {"Файл", "File"}
-				repeat with itemName in {"Экспорт…", "Экспорт...", "Export…", "Export..."}
-					if not ok then
-						try
-							click menu item (itemName as text) of menu (menuName as text) of menu bar 1
-							set ok to true
-							my logLine("triggerExport: клик по '" & (itemName as text) & "' OK")
-						end try
-					end if
-				end repeat
-			end repeat
-			if not ok then
-				my logLine("triggerExport: меню недоступно, шлю ⌘E")
-				keystroke "e" using {command down}
-			end if
-		end tell
+	-- Стратегия 3: keystroke ⌘E (shortcut пункта Экспорт).
+	my logLine("triggerExport: AX-кнопка не найдена и меню disabled, шлю ⌘E")
+	tell application "System Events" to tell process kAppName
+		keystroke "e" using {command down}
 	end tell
 end triggerExport
+
+on clickExportButton()
+	-- Ищет в окне 1 элемент с AXIdentifier = "exportButton" и кликает по нему.
+	-- В дампе это AXUnknown с дочерним AXStaticText "Экспорт".
+	tell application "System Events"
+		tell process kAppName
+			try
+				if (count of windows) is 0 then return false
+				set theBtn to my findByAxId(window 1, "exportButton", 0, 6)
+				if theBtn is missing value then return false
+				-- AXUnknown иногда не реагирует на click. Пробуем three ways:
+				-- 1) AXPress action;
+				-- 2) click;
+				-- 3) клик по позиции центра.
+				try
+					perform action "AXPress" of theBtn
+					return true
+				end try
+				try
+					click theBtn
+					return true
+				end try
+				try
+					set p to position of theBtn
+					set sz to size of theBtn
+					set cx to ((item 1 of p) as integer) + ((item 1 of sz) as integer) / 2
+					set cy to ((item 2 of p) as integer) + ((item 2 of sz) as integer) / 2
+					click at {cx as integer, cy as integer}
+					return true
+				end try
+			end try
+			return false
+		end tell
+	end tell
+end clickExportButton
+
+on findByAxId(rootEl, targetId, depth, maxDepth)
+	if depth > maxDepth then return missing value
+	tell application "System Events"
+		try
+			set axId to value of attribute "AXIdentifier" of rootEl
+			if axId is targetId then return rootEl
+		end try
+		try
+			set kids to every UI element of rootEl
+			repeat with kidRef in kids
+				set hit to my findByAxId((contents of kidRef), targetId, depth + 1, maxDepth)
+				if hit is not missing value then return hit
+			end repeat
+		end try
+	end tell
+	return missing value
+end findByAxId
 
 on waitForExportSheet()
 	set elapsed to 0
