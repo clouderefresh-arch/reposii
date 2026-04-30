@@ -133,19 +133,66 @@ on normalizeList(maybeList)
 	return {maybeList}
 end normalizeList
 
+on toPosix(anyValue)
+	-- Превращает alias / file / HFS-строку с двоеточиями / POSIX-строку
+	-- в нормализованный POSIX-путь.
+	if anyValue is missing value then return ""
+	-- alias / file → POSIX path of …
+	try
+		set c to class of anyValue
+		if c is alias or c is «class furl» then
+			return POSIX path of anyValue
+		end if
+	end try
+	-- text: HFS (содержит ":" и не начинается с "/")  → конвертируем
+	try
+		set s to anyValue as text
+		if s contains ":" and s does not start with "/" then
+			try
+				return POSIX path of (s as alias)
+			end try
+		end if
+		return s
+	end try
+	return ""
+end toPosix
+
 ------------------------------------------------------------------------------
 -- ОПРЕДЕЛЕНИЕ ИСТОЧНИКА
 ------------------------------------------------------------------------------
 
 on resolveSourceList(argv)
-	-- 1. CLI-аргумент.
+	-- 1. CLI-аргумент(ы) — собираем все .360 со всех переданных путей.
 	if (count of argv) is greater than or equal to 1 then
-		set arg to (item 1 of argv) as text
-		return my collect360FromPath(arg)
+		set total to {}
+		repeat with argRef in argv
+			set argPath to my toPosix(contents of argRef)
+			my logLine("resolveSourceList: проверяю путь '" & argPath & "'")
+			set inThis to my collect360FromPath(argPath)
+			my logLine("  → найдено: " & (count of inThis))
+			repeat with x in inThis
+				set end of total to (x as text)
+			end repeat
+		end repeat
+		if (count of total) > 0 then return total
+		-- Аргумент был, но ничего не нашли — спрашиваем пользователя.
+		set firstArgText to my toPosix(contents of (item 1 of argv))
+		try
+			display dialog ¬
+				"В переданном пути не найдено ни одного .360 файла:" & return & return & ¬
+				firstArgText & return & return & ¬
+				"Выберите папку вручную." ¬
+				buttons {"Отмена", "Выбрать папку"} default button "Выбрать папку" with title "GoPro 360 → MP4" with icon caution
+			set chosen to choose folder with prompt "Выберите папку с .360 файлами (поиск рекурсивный)"
+			return my collect360FromPath(POSIX path of chosen)
+		on error
+			return {}
+		end try
 	end if
 	-- 2. Свойство.
 	if kSourceFolder is not "" then
-		return my collect360FromPath(kSourceFolder)
+		set fromProp to my collect360FromPath(kSourceFolder)
+		if (count of fromProp) > 0 then return fromProp
 	end if
 	-- 3. Диалог.
 	set chosen to choose folder with prompt "Выберите папку с .360 файлами (поиск рекурсивный)"
@@ -199,12 +246,17 @@ on collect360FromPath(rootPosix)
 	-- Отсекаем macOS AppleDouble-«дубли» вида ._GS010705.360 (служебные файлы
 	-- метаданных, которые macOS создаёт на не-APFS томах: NTFS / exFAT / NFS).
 	set escaped to my shellQuote(rootPosix)
-	set cmd to "if [ -d " & escaped & " ]; then /usr/bin/find " & escaped & " -type f -iname '*.360' -not -name '._*'; elif [ -f " & escaped & " ]; then echo " & escaped & "; fi"
+	set cmd to "if [ -d " & escaped & " ]; then /usr/bin/find " & escaped & " -type f -iname '*.360' -not -name '._*'; elif [ -f " & escaped & " ]; then echo " & escaped & "; else echo '__NOT_EXISTS__'; fi"
 	try
 		set rawOutput to do shell script cmd
-	on error
+	on error errMsg
+		my logLine("  collect360FromPath: shell error: " & errMsg)
 		return {}
 	end try
+	if rawOutput is "__NOT_EXISTS__" then
+		my logLine("  collect360FromPath: путь не существует или нет доступа: " & rootPosix)
+		return {}
+	end if
 	if rawOutput is "" then return {}
 
 	set AppleScript's text item delimiters to (ASCII character 10)
