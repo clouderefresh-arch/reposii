@@ -497,16 +497,190 @@ on renderOne(srcPosix, outFolderPosix, baseName)
 	my expandAdvancedSection()
 	my applyAllSettings()
 
-	my clickButtonByNames(my exportContainer(), {"Далее…", "Далее...", "Next…", "Next..."})
+	-- Кликаем "Далее..." (AXId=exportNext) через каскад стратегий.
+	-- Кнопка часто AXUnknown, обычный click её не активирует.
+	if not (my clickButtonInExportSheet("exportNext", {"Далее…", "Далее...", "Next…", "Next..."})) then
+		error "Не удалось нажать 'Далее...'"
+	end if
+	my logLine("Нажата 'Далее...' (exportNext)")
 
 	my waitForSaveSheet()
 	my setSaveFileName(baseName & ".mp4")
 	my navigateSaveSheetToFolder(outFolderPosix)
-	my clickButtonByNames(my saveSheet(), {"Сохранить", "Save", "Экспорт", "Export"})
+	-- Кликаем "Сохранить" — это уже стандартный NSSavePanel, обычный click работает.
+	if not (my clickButtonByNames(my saveSheet(), {"Сохранить", "Save", "Экспорт", "Export"})) then
+		-- На всякий случай Enter — в save panel это default-кнопка.
+		tell application "System Events" to keystroke return
+		my logLine("Сохранить: использован keystroke return")
+	end if
 
 	delay 1.0
 	my closeFrontDocument()
 end renderOne
+
+on clickButtonInExportSheet(axId, fallbackNames)
+	-- Каскад стратегий клика по кнопке внутри export sheet:
+	-- 1) AXPress по AXIdentifier
+	-- 2) AXPress по имени кнопки (если AXId не нашёлся)
+	-- 3) cliclick в центр кнопки
+	-- 4) click at в центр кнопки
+	-- 5) keystroke return (только если default-кнопка)
+	-- После каждой проверяем, что sheet сменился / закрылся.
+	set targetBtn to my findButtonByAxIdInSheet(axId)
+	if targetBtn is missing value then
+		-- fallback по имени
+		repeat with nm in fallbackNames
+			set targetBtn to my findButtonByNameInSheet(nm as text)
+			if targetBtn is not missing value then exit repeat
+		end repeat
+	end if
+
+	if targetBtn is missing value then
+		my logLine("clickButtonInExportSheet: кнопка не найдена (axId=" & axId & ")")
+		return false
+	end if
+
+	set beforeChange to my exportSheetSignature()
+
+	-- Стратегия A: AXPress.
+	try
+		tell application "System Events" to perform action "AXPress" of targetBtn
+		my logLine("clickButtonInExportSheet[" & axId & "]: AXPress отправлен")
+		if my waitSheetChanged(beforeChange, 3) then return true
+	on error eMsg
+		my logLine("clickButtonInExportSheet[" & axId & "]: AXPress fail: " & eMsg)
+	end try
+
+	-- Стратегия B: cliclick по координатам.
+	set coords to my centerOf(targetBtn)
+	if coords is not missing value then
+		set cx to item 1 of coords
+		set cy to item 2 of coords
+		set cliclickPath to my findCliclick()
+		if cliclickPath is not "" then
+			try
+				tell application kAppName to activate
+				delay 0.2
+				do shell script (quoted form of cliclickPath) & " c:" & cx & "," & cy
+				my logLine("clickButtonInExportSheet[" & axId & "]: cliclick " & cx & "," & cy)
+				if my waitSheetChanged(beforeChange, 3) then return true
+			on error eMsg
+				my logLine("clickButtonInExportSheet[" & axId & "]: cliclick fail: " & eMsg)
+			end try
+		end if
+	end if
+
+	-- Стратегия C: System Events click at.
+	if coords is not missing value then
+		set cx to item 1 of coords
+		set cy to item 2 of coords
+		try
+			tell application kAppName to activate
+			delay 0.2
+			tell application "System Events" to click at {cx, cy}
+			my logLine("clickButtonInExportSheet[" & axId & "]: click at " & cx & "," & cy)
+			if my waitSheetChanged(beforeChange, 3) then return true
+		on error eMsg
+			my logLine("clickButtonInExportSheet[" & axId & "]: click at fail: " & eMsg)
+		end try
+	end if
+
+	-- Стратегия D: обычный click (на случай если кнопка стандартная).
+	try
+		tell application "System Events" to click targetBtn
+		my logLine("clickButtonInExportSheet[" & axId & "]: click targetBtn")
+		if my waitSheetChanged(beforeChange, 3) then return true
+	end try
+
+	-- Стратегия E (только для exportNext): keystroke return.
+	if axId is "exportNext" then
+		try
+			tell application "System Events" to keystroke return
+			my logLine("clickButtonInExportSheet[" & axId & "]: keystroke return")
+			if my waitSheetChanged(beforeChange, 3) then return true
+		end try
+	end if
+
+	my logLine("clickButtonInExportSheet[" & axId & "]: ВСЕ стратегии не сработали")
+	return false
+end clickButtonInExportSheet
+
+on findButtonByAxIdInSheet(axId)
+	tell application "System Events"
+		tell process kAppName
+			try
+				if (count of windows) is 0 then return missing value
+				set w1 to window 1
+				if (exists sheet 1 of w1) then
+					set btns to every button of sheet 1 of w1
+					repeat with bRef in btns
+						set bEl to (contents of bRef)
+						try
+							set thisAx to value of attribute "AXIdentifier" of bEl
+							if thisAx is not missing value and (thisAx as text) is (axId as text) then return bEl
+						end try
+					end repeat
+				end if
+			end try
+		end tell
+	end tell
+	return missing value
+end findButtonByAxIdInSheet
+
+on findButtonByNameInSheet(btnName)
+	tell application "System Events"
+		tell process kAppName
+			try
+				if (count of windows) is 0 then return missing value
+				set w1 to window 1
+				if (exists sheet 1 of w1) then
+					try
+						return button btnName of sheet 1 of w1
+					end try
+				end if
+			end try
+		end tell
+	end tell
+	return missing value
+end findButtonByNameInSheet
+
+on exportSheetSignature()
+	-- Возвращает текстовую "сигнатуру" текущего sheet'а.
+	-- Когда sheet сменится (Далее... → save panel) или закроется,
+	-- сигнатура изменится, и мы это поймём.
+	tell application "System Events"
+		tell process kAppName
+			try
+				if (count of windows) is 0 then return "no-window"
+				set w1 to window 1
+				if not (exists sheet 1 of w1) then return "no-sheet"
+				set sheetEl to sheet 1 of w1
+				set sig to ""
+				try
+					set btns to every button of sheetEl
+					repeat with bRef in btns
+						try
+							set sig to sig & "|" & (name of (contents of bRef) as text)
+						end try
+					end repeat
+				end try
+				return sig
+			end try
+		end tell
+	end tell
+	return "?"
+end exportSheetSignature
+
+on waitSheetChanged(beforeSig, maxSec)
+	set elapsed to 0
+	repeat while elapsed < maxSec
+		set nowSig to my exportSheetSignature()
+		if nowSig is not beforeSig then return true
+		delay 0.25
+		set elapsed to elapsed + 0.25
+	end repeat
+	return false
+end waitSheetChanged
 
 on pollExportSheet(maxSec)
 	-- Возвращает true, если в течение maxSec секунд появился контейнер экспорта.
