@@ -135,19 +135,19 @@ end normalizeList
 
 on toPosix(anyValue)
 	-- Превращает alias / file / HFS-строку с двоеточиями / POSIX-строку
-	-- в нормализованный POSIX-путь.
+	-- в нормализованный POSIX-путь. Никогда не падает, в худшем случае "".
 	if anyValue is missing value then return ""
-	-- alias / file → POSIX path of …
+
+	-- Сразу пробуем "POSIX path of" — оно умеет alias/file/HFS-text.
 	try
-		set c to class of anyValue
-		if c is alias or c is «class furl» then
-			return POSIX path of anyValue
-		end if
+		return POSIX path of anyValue
 	end try
-	-- text: HFS (содержит ":" и не начинается с "/")  → конвертируем
+
+	-- Если предыдущее не сработало, пробуем как text.
 	try
 		set s to anyValue as text
-		if s contains ":" and s does not start with "/" then
+		if s starts with "/" then return s
+		if s contains ":" then
 			try
 				return POSIX path of (s as alias)
 			end try
@@ -165,18 +165,20 @@ on resolveSourceList(argv)
 	-- 1. CLI-аргумент(ы) — собираем все .360 со всех переданных путей.
 	if (count of argv) is greater than or equal to 1 then
 		set total to {}
-		repeat with argRef in argv
-			set argPath to my toPosix(contents of argRef)
+		repeat with i from 1 to (count of argv)
+			set argPath to my toPosix(item i of argv)
 			my logLine("resolveSourceList: проверяю путь '" & argPath & "'")
-			set inThis to my collect360FromPath(argPath)
-			my logLine("  → найдено: " & (count of inThis))
-			repeat with x in inThis
-				set end of total to (x as text)
-			end repeat
+			if argPath is not "" then
+				set inThis to my collect360FromPath(argPath)
+				my logLine("  → найдено: " & (count of inThis))
+				repeat with j from 1 to (count of inThis)
+					set end of total to ((item j of inThis) as text)
+				end repeat
+			end if
 		end repeat
 		if (count of total) > 0 then return total
 		-- Аргумент был, но ничего не нашли — спрашиваем пользователя.
-		set firstArgText to my toPosix(contents of (item 1 of argv))
+		set firstArgText to my toPosix(item 1 of argv)
 		try
 			display dialog ¬
 				"В переданном пути не найдено ни одного .360 файла:" & return & return & ¬
