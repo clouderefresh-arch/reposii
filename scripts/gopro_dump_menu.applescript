@@ -76,8 +76,8 @@ on dumpMenuBar()
 					set bar1 to menu bar 1
 					set topMenus to every menu of bar1
 					my writeLine("top menus: " & (count of topMenus))
-					repeat with m in topMenus
-						set mEl to (contents of m)
+					repeat with menuRef in topMenus
+						set mEl to (contents of menuRef)
 						set mName to ""
 						try
 							set mName to (name of mEl as text)
@@ -85,14 +85,13 @@ on dumpMenuBar()
 						my writeLine("")
 						my writeLine("[MENU] " & mName)
 						try
-							set items_ to every menu item of mEl
-							my writeLine("  items: " & (count of items_))
-							repeat with it in items_
-								set itEl to (contents of it)
-								my dumpMenuItem(itEl, "  ")
+							set itemList to every menu item of mEl
+							my writeLine("  items: " & (count of itemList))
+							repeat with itemRef in itemList
+								my dumpMenuItem((contents of itemRef), "  ")
 							end repeat
-						on error e
-							my writeLine("  (не смог перечислить пункты: " & e & ")")
+						on error eMsg
+							my writeLine("  (не смог перечислить пункты: " & eMsg & ")")
 						end try
 					end repeat
 				end if
@@ -130,8 +129,8 @@ on dumpMenuItem(itEl, indent)
 		set sub to menu 1 of itEl
 		try
 			set subItems to every menu item of sub
-			repeat with sItem in subItems
-				my dumpMenuItem((contents of sItem), indent & "    ")
+			repeat with subRef in subItems
+				my dumpMenuItem((contents of subRef), indent & "    ")
 			end repeat
 		end try
 	end try
@@ -144,8 +143,8 @@ on dumpWindows()
 			try
 				set wins to every window
 				my writeLine("count=" & (count of wins))
-				repeat with w in wins
-					set wEl to (contents of w)
+				repeat with winRef in wins
+					set wEl to (contents of winRef)
 					set wName to ""
 					set wRole to ""
 					set wPos to ""
@@ -164,8 +163,8 @@ on dumpWindows()
 					end try
 					my writeLine("- window name=" & wName & " | role=" & wRole & " | pos=" & wPos & " | size=" & wSize)
 				end repeat
-			on error e
-				my writeLine("ОШИБКА dumpWindows: " & e)
+			on error eMsg
+				my writeLine("ОШИБКА dumpWindows: " & eMsg)
 			end try
 		end tell
 	end tell
@@ -219,8 +218,8 @@ on dumpElement(el, depth)
 	my writeLine(indent & role_ & "  name=" & name_ & "  desc=" & desc_ & "  AXId=" & axId & "  value=" & val_)
 	try
 		set kids to every UI element of el
-		repeat with k in kids
-			my dumpElement((contents of k), depth + 1)
+		repeat with kidRef in kids
+			my dumpElement((contents of kidRef), depth + 1)
 		end repeat
 	end try
 end dumpElement
