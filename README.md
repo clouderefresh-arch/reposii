@@ -206,12 +206,51 @@ property kDenoiseLevel    : 0.5
 
 **Шаг 3. Выдать права macOS.**
 
-GoPro Player управляется через GUI-скриптинг, поэтому Terminal (или Script Editor — кому чем удобнее запускать) должен иметь:
+GoPro Player управляется через GUI-скриптинг, поэтому процессу, который запускает скрипт, нужны два **разных** разрешения:
 
-- **System Settings → Privacy & Security → Accessibility** — поставить флажок напротив `Terminal` (или `Script Editor`/`Automator`/чем запускаете).
-- **System Settings → Privacy & Security → Automation** — внутри `Terminal` разрешить управление приложениями `GoPro Player`, `Finder`, `System Events`. Эти запросы macOS покажет автоматически при первом запуске.
+- **Accessibility** («Функции универсального доступа») — для эмуляции нажатий клавиш и работы с UI-элементами.
+- **Automation** — для команд `tell application …`.
 
-Если этого не сделать, скрипт упадёт с ошибкой `-1719` или `-25211`.
+> ⚠️ **Важная тонкость**: при запуске через `osascript file.applescript` macOS требует Accessibility-право не у Terminal, а у самого `/usr/bin/osascript`. Терминалу можно ставить флажки сколько угодно — `osascript` всё равно останется без прав, и вы получите ошибку `-25211 «Функции Универсального доступа для osascript не разрешены»`.
+>
+> Решений два: либо дать Accessibility самому бинарнику `osascript` (см. ниже), либо собрать `.app` и дать права уже ему — это чище. Рекомендую второй путь.
+
+#### Способ 1 (рекомендуется): собрать `.app` и дать права ему
+
+```bash
+osacompile -o "GoPro 360 Render.app" scripts/gopro_render_then_delete_360.applescript
+```
+
+После этого:
+
+1. Запустите `GoPro 360 Render.app` двойным кликом (macOS попросит подтвердить запуск приложения от неизвестного разработчика — согласитесь, или зайдите в `System Settings → Privacy & Security` и нажмите **Open Anyway**).
+2. **System Settings → Privacy & Security → Accessibility** → `+` → выберите `GoPro 360 Render.app` → флажок **ON**.
+3. **System Settings → Privacy & Security → Automation** → раскройте `GoPro 360 Render.app` → разрешите управление `GoPro Player`, `Finder`, `System Events` (эти запросы macOS покажет автоматически при первом запуске; соглашайтесь).
+4. Дальше можно либо запускать двойным кликом (тогда появится диалог выбора папки), либо **перетаскивать папку или `.360` файлы прямо на иконку** приложения (droplet-режим).
+
+#### Способ 2: дать Accessibility самому `osascript`
+
+Если хотите запускать `osascript scripts/gopro_render_then_delete_360.applescript …` из Terminal:
+
+1. `System Settings → Privacy & Security → Accessibility` → нажмите `+`.
+2. В диалоге выбора файлов нажмите **⇧⌘G** и введите:
+
+   ```
+   /usr/bin/osascript
+   ```
+
+3. Подтвердите → `osascript` появится в списке → включите тумблер.
+4. Аналогично в `Privacy & Security → Automation` разрешите Terminal управлять `GoPro Player`, `Finder`, `System Events` (это запросится автоматически при первом запуске).
+5. **Перезапустите Terminal**.
+
+#### Способ 3: запуск из Script Editor
+
+Откройте `scripts/gopro_render_then_delete_360.applescript` в **Script Editor.app** и нажмите **▶ Run**. Дайте Script Editor права в Accessibility и Automation. Удобно для отладки, но не для «нажал и забыл».
+
+#### Коды ошибок прав
+
+- `-25211` или «osascript не разрешены функции универсального доступа» → Accessibility для `osascript`/`.app`.
+- `-1719` или `not authorized to send Apple events` → Automation для нужного целевого приложения.
 
 **Шаг 4. Закрыть лишние окна GoPro Player.**
 

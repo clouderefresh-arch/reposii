@@ -289,8 +289,13 @@ on resolveGlobalOutputFolder()
 end resolveGlobalOutputFolder
 
 on parentFolder(posixPath)
+	set p to posixPath as text
+	-- Снимаем trailing slashes, чтобы не получить висящий "//".
+	repeat while (count of p) > 1 and (last character of p) is "/"
+		set p to text 1 thru -2 of p
+	end repeat
 	set AppleScript's text item delimiters to "/"
-	set parts to text items of posixPath
+	set parts to text items of p
 	if (count of parts) ≤ 1 then
 		set AppleScript's text item delimiters to ""
 		return "/"
