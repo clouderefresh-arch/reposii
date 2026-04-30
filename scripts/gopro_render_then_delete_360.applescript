@@ -508,6 +508,11 @@ on renderOne(srcPosix, outFolderPosix, baseName)
 	end if
 	my logLine("Нажата 'Далее...' (exportNext)")
 
+	-- Снимок UI сразу после "Далее..." — чтобы видеть, что появилось.
+	delay 1.0
+	my dumpUIState("/tmp/gopro_after_next.txt", srcPosix, "(state right after Далее...)")
+	my logLine("UI после 'Далее...' записан в /tmp/gopro_after_next.txt")
+
 	my waitForSaveSheet()
 	-- Сначала навигируем в нужную папку (через Cmd+Shift+G), потом задаём имя.
 	-- Порядок важен: после Go to Folder фокус переходит в поле имени.
