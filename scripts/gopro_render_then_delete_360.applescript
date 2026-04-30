@@ -118,22 +118,21 @@ on resolveSourceList(argv)
 	return my collect360FromPath(POSIX path of chosen)
 end resolveSourceList
 
-on expandDropped(items)
+on expandDropped(droppedList)
 	set out to {}
-	repeat with itm in items
+	repeat with itm in droppedList
 		set p to POSIX path of itm
 		try
-			set info to (info for itm)
-			if folder of info is true then
+			set finfo to (info for itm)
+			if folder of finfo is true then
 				set sub to my collect360FromPath(p)
-				repeat with s in sub
-					set end of out to (s as text)
+				repeat with subItem in sub
+					set end of out to (subItem as text)
 				end repeat
 			else
 				if (my endsWithIgnoringCase(p, ".360")) then set end of out to p
 			end if
 		on error
-			-- Если info недоступен (например, alias битый) — попробуем как файл.
 			if (my endsWithIgnoringCase(p, ".360")) then set end of out to p
 		end try
 	end repeat
