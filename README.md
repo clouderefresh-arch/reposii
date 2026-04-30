@@ -16,7 +16,8 @@
 | [`scripts/gopro_export.applescript`](scripts/gopro_export.applescript) | Запустить экспорт активного клипа через меню `File → Export` |
 | [`scripts/gopro_batch_open_finder.applescript`](scripts/gopro_batch_open_finder.applescript) | Открыть выделенные в Finder файлы в GoPro Player |
 | [`scripts/gopro_batch_export_folder.applescript`](scripts/gopro_batch_export_folder.applescript) | Пакетный экспорт всех видео из выбранной папки |
-| [`scripts/gopro_convert_360_to_mp4.applescript`](scripts/gopro_convert_360_to_mp4.applescript) | **Рекурсивная конвертация всех `.360` файлов в `.mp4` с настраиваемыми параметрами (формат, кодек, качество, разрешение, World Lock, звук)** |
+| [`scripts/gopro_convert_360_to_mp4.applescript`](scripts/gopro_convert_360_to_mp4.applescript) | Рекурсивная конвертация всех `.360` файлов в `.mp4` с настраиваемыми параметрами (универсальный, поэлементно ждёт окончания каждого экспорта) |
+| [`scripts/gopro_queue_360_to_mp4.applescript`](scripts/gopro_queue_360_to_mp4.applescript) | **Рекомендуемый**: ставит все `.360` в очередь экспорта GoPro Player одним проходом (использует кнопку «Отправить в очередь»). Точно ложится на UI «Настройки экспорта» (русская локаль) |
 | [`scripts/gopro_quit.applescript`](scripts/gopro_quit.applescript) | Корректно завершить приложение |
 | [`scripts/gopro_controller.applescript`](scripts/gopro_controller.applescript) | Универсальный контроллер с handlers (можно `load script`) |
 
@@ -51,9 +52,72 @@ goproLib's seekBy(15)
 goproLib's exportCurrent()
 ```
 
-## Конвертация `.360` → `.mp4`
+## Конвертация `.360` → `.mp4` (через очередь экспорта — рекомендуется)
 
-Сценарий [`scripts/gopro_convert_360_to_mp4.applescript`](scripts/gopro_convert_360_to_mp4.applescript) делает именно то, что нужно для большинства съёмок с GoPro Max / GoPro 360:
+Сценарий [`scripts/gopro_queue_360_to_mp4.applescript`](scripts/gopro_queue_360_to_mp4.applescript) учитывает реальный UI диалога **«Настройки экспорта»** (см. скриншот) и не ждёт окончания каждого рендера, а **ставит все клипы в очередь** через кнопку **«Отправить в очередь»**. После этого GoPro Player сам последовательно отрендерит их в фоне.
+
+### Что выставляется автоматически
+
+| Параметр диалога | `property` в скрипте | Тип |
+|---|---|---|
+| Разрешение (5,6K / 4K / Пользовательский) | `kResolution` | radio |
+| Кодек (HEVC / H.264 / ProRes) | `kCodec` | radio |
+| Скорость экспорта (медленно↔быстро) | `kSpeedSlider` (0..1) | slider |
+| Качество (хорошее↔лучшее) | `kQualitySlider` (0..1) | slider |
+| Размер файла | `kFileSizeSlider` (0..1) | slider |
+| Битрейт (Мин.↔Макс.) | `kBitrate` (0..1) | slider |
+| Denoise (вкл + уровень) | `kDenoiseEnabled`, `kDenoiseLevel` | checkbox + slider |
+| Блокировка направления | `kWorldLock` | checkbox |
+| Линия горизонта | `kHorizonLine` | checkbox |
+| AntiShake | `kAntiShake` | checkbox |
+| Оптимизация крепления | `kMountOptimize` | checkbox |
+
+Чекбоксы можно «не трогать», задав `missing value` — тогда скрипт оставит то, что выставлено в плеере по умолчанию.
+
+### Параметры по умолчанию в скрипте
+
+```applescript
+property kResolution     : "4K"
+property kCodec          : "H.264"
+property kWorldLock      : false   -- "Блокировка направления"
+property kHorizonLine    : true    -- "Линия горизонта"
+property kAntiShake      : true    -- "AntiShake"
+property kMountOptimize  : false   -- "Оптимизация крепления"
+property kSpeedSlider    : 0.7     -- скорость экспорта
+property kQualitySlider  : 0.5     -- качество
+property kFileSizeSlider : 0.8     -- размер файла
+property kBitrate        : 0.5     -- битрейт
+property kDenoiseEnabled : false
+property kDenoiseLevel   : 0.5
+```
+
+### Запуск
+
+```bash
+osascript scripts/gopro_queue_360_to_mp4.applescript
+osascript scripts/gopro_queue_360_to_mp4.applescript ~/Footage/Max
+tail -f /tmp/gopro_360_to_mp4.log
+```
+
+Папку для сохранения результатов GoPro Player запросит однократно (в первый раз) — выберите её, и все последующие клипы из очереди уйдут туда же.
+
+### Как это работает
+
+1. Скрипт открывает первый `.360` файл, нажимает `File → Export…` (или ⌘E).
+2. В появившемся диалоге «Настройки экспорта»:
+   - разворачивает раздел «Расширенные параметры» (если свёрнут);
+   - выбирает radio-кнопки `Разрешение` и `Кодек`;
+   - проставляет все чекбоксы;
+   - двигает слайдеры (`AXSlider value` пишется напрямую, при отказе — клик мышью в нужной координате);
+3. Нажимает **«Отправить в очередь»**.
+4. Закрывает текущий клип (⌘W) и переходит к следующему.
+5. После прохода — все файлы стоят в очереди GoPro Player и рендерятся сами.
+
+## Альтернатива: блокирующая конвертация по одному файлу
+
+Сценарий [`scripts/gopro_convert_360_to_mp4.applescript`](scripts/gopro_convert_360_to_mp4.applescript) делает то же самое, но без использования очереди — нажимает в диалоге `Export` и ждёт окончания рендера каждого файла. Полезно, если у вас старая версия GoPro Player без кнопки «Отправить в очередь», или если нужно поштучно складывать результаты в разные папки.
+
+Описание (для общего случая — съёмки GoPro Max / 360):
 
 1. Спрашивает (или принимает аргументами) папку с `.360` и папку для результата.
 2. Рекурсивно ищет все `.360` через `find`.
