@@ -16,6 +16,7 @@
 | [`scripts/gopro_export.applescript`](scripts/gopro_export.applescript) | Запустить экспорт активного клипа через меню `File → Export` |
 | [`scripts/gopro_batch_open_finder.applescript`](scripts/gopro_batch_open_finder.applescript) | Открыть выделенные в Finder файлы в GoPro Player |
 | [`scripts/gopro_batch_export_folder.applescript`](scripts/gopro_batch_export_folder.applescript) | Пакетный экспорт всех видео из выбранной папки |
+| [`scripts/gopro_convert_360_to_mp4.applescript`](scripts/gopro_convert_360_to_mp4.applescript) | **Рекурсивная конвертация всех `.360` файлов в `.mp4` с настраиваемыми параметрами (формат, кодек, качество, разрешение, World Lock, звук)** |
 | [`scripts/gopro_quit.applescript`](scripts/gopro_quit.applescript) | Корректно завершить приложение |
 | [`scripts/gopro_controller.applescript`](scripts/gopro_controller.applescript) | Универсальный контроллер с handlers (можно `load script`) |
 
@@ -49,6 +50,57 @@ goproLib's playPause()
 goproLib's seekBy(15)
 goproLib's exportCurrent()
 ```
+
+## Конвертация `.360` → `.mp4`
+
+Сценарий [`scripts/gopro_convert_360_to_mp4.applescript`](scripts/gopro_convert_360_to_mp4.applescript) делает именно то, что нужно для большинства съёмок с GoPro Max / GoPro 360:
+
+1. Спрашивает (или принимает аргументами) папку с `.360` и папку для результата.
+2. Рекурсивно ищет все `.360` через `find`.
+3. Для каждого файла:
+   - открывает его в GoPro Player;
+   - вызывает `File → Export…`;
+   - выставляет в окне экспорта формат, кодек, качество, разрешение, World Lock и звук;
+   - подставляет имя файла `<original_name>.mp4`;
+   - переходит в указанную папку (через `⇧⌘G`);
+   - подтверждает экспорт и ждёт его завершения;
+   - закрывает клип и переходит к следующему.
+4. По завершении показывает уведомление и (при ошибках) сводный диалог.
+
+### Параметры
+
+Все параметры экспорта вынесены в `property` в начале файла:
+
+```applescript
+property kFormat : "MP4"        -- формат вывода
+property kCodec : "H.264"       -- "H.264" / "HEVC" / "ProRes"
+property kQuality : "High"      -- "High" / "Medium" / "Low" / "Original"
+property kResolution : "5.6K"   -- "5.6K" / "4K" / "1440p" / "1080p"
+property kWorldLock : true      -- true / false
+property kIncludeAudio : true   -- true / false
+```
+
+Скрипт ищет в окне экспорта popup-меню и чекбоксы по нескольким возможным подписям (`Output`, `Format`, `Codec`, `Quality`, `Resolution`, `World Lock`, `Horizon Lock`, …) и кликает в нужный пункт. Если в вашей версии GoPro Player подпись отличается — добавьте её в массив `labels` соответствующего вызова `setPopupValue` / `setCheckbox`.
+
+### Запуск
+
+```bash
+osascript scripts/gopro_convert_360_to_mp4.applescript
+osascript scripts/gopro_convert_360_to_mp4.applescript ~/Footage/Max ~/Footage/Max_MP4
+```
+
+Прогресс пишется в `/tmp/gopro_360_to_mp4.log`:
+
+```bash
+tail -f /tmp/gopro_360_to_mp4.log
+```
+
+### Рекомендации
+
+- Перед массовой конвертацией прогоните **один файл вручную** через `File → Export…`, выставьте нужные параметры — GoPro Player запоминает их для следующего раза, и автоматизация будет надёжнее.
+- На время рендера лучше не трогать мышь и клавиатуру: GUI-скриптинг чувствителен к фокусу.
+- Если экспорт длинного клипа занимает больше получаса, увеличьте `kExportFinishTimeout` (по умолчанию `1800` секунд).
+- Для очень тяжёлых .360 файлов имеет смысл выставить `kBetweenFilesDelay` побольше (2–3 секунды), чтобы дать ОС «отдышаться».
 
 ## Настройка прав доступа
 
